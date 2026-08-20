@@ -1363,6 +1363,74 @@ ruta('PUT', '/api/admin/plantillas/(\\d+)', (req, res, p, cuerpo) => {
   json(res, 200, { ok: true });
 });
 
+// Guarda de golpe todos los cambios hechos en la matriz de permisos. Se valida
+// el resultado FINAL de cada persona, no cambio por cambio: así se puede quitar
+// un módulo y dar otro en la misma tanda sin que el intermedio parezca inválido.
+ruta('PUT', '/api/admin/permisos', (req, res, _p, cuerpo) => {
+  const editor = exigir(req, res, 'configuracion');
+  if (!editor) return;
+
+  const cambios = Array.isArray(cuerpo.cambios) ? cuerpo.cambios : [];
+  if (!cambios.length) return json(res, 200, { ok: true, guardados: 0 });
+
+  // Se agrupan por persona y se calcula cómo quedaría cada una.
+  const porPersona = new Map();
+  for (const c of cambios) {
+    const id = Number(c.usuario_id);
+    if (!PERMISOS_VALIDOS.has(c.clave)) {
+      return json(res, 400, { error: `El permiso «${c.clave}» no existe.` });
+    }
+    const persona = porPersona.get(id) || db.prepare('SELECT * FROM usuarios WHERE id = ?').get(id);
+    if (!persona) return json(res, 404, { error: 'Una de las personas ya no existe. Recarga la pantalla.' });
+    if (!persona.ajustes) persona.ajustes = leerAjustes(persona.permisos_extra);
+    if (c.heredar || c.valor === null) delete persona.ajustes[c.clave];
+    else persona.ajustes[c.clave] = !!c.valor;
+    porPersona.set(id, persona);
+  }
+
+  // Validación sobre el resultado final de cada persona.
+  for (const [id, persona] of porPersona) {
+    const efectivos = permisosDe(persona.rol, JSON.stringify(persona.ajustes));
+
+    if (!Object.keys(efectivos).some((k) => k.startsWith('mod_') && efectivos[k])) {
+      return json(res, 400, {
+        error: `${persona.nombre} se quedaría sin ningún módulo: no podría entrar a nada.`,
+      });
+    }
+    if (PERMISOS_SENSIBLES.some((k) => efectivos[k]) && !persona.pin) {
+      return json(res, 400, {
+        error: `${persona.nombre} necesita un PIN antes de darle Reportes, Comparativa o Configuración.`,
+      });
+    }
+    if (persona.rol === 'admin' && persona.activo && !efectivos.configuracion) {
+      const otros = db.prepare(`
+        SELECT COUNT(*) AS n FROM usuarios WHERE rol = 'admin' AND activo = 1 AND id <> ?
+      `).get(id).n;
+      if (otros === 0) {
+        return json(res, 400, { error: `${persona.nombre} es el único Administrador activo: no puede quedarse sin Configuración.` });
+      }
+    }
+  }
+
+  const guardar = db.prepare('UPDATE usuarios SET permisos_extra = ? WHERE id = ?');
+  db.exec('BEGIN');
+  try {
+    for (const [id, persona] of porPersona) guardar.run(JSON.stringify(persona.ajustes), id);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error(err);
+    return json(res, 500, { error: 'No se pudieron guardar los cambios.' });
+  }
+
+  // Quien cambió de permisos vuelve a entrar, para no seguir con los viejos.
+  for (const [token, sesion] of sesiones) {
+    if (porPersona.has(sesion.usuario.id)) sesiones.delete(token);
+  }
+
+  json(res, 200, { ok: true, guardados: cambios.length, personas: porPersona.size });
+});
+
 // Otorga o quita un permiso concreto a una persona. Guarda un ajuste explícito
 // (true/false) sobre lo que da su perfil; `heredar` lo borra y la persona vuelve
 // a lo que su perfil determine.

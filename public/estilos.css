@@ -580,6 +580,12 @@ table.matriz-permisos th.vertical span {
 }
 
 table.matriz-permisos td.ajustado { background: var(--azul-claro); }
+
+/* Cambio tocado pero todavía sin guardar. */
+table.matriz-permisos td.pendiente-guardar {
+  background: #FFF6E5;
+  box-shadow: inset 0 0 0 2px var(--ambar);
+}
 table.matriz-permisos td.ajustado .casilla { border-color: var(--azul-inko); }
 table.matriz-permisos .fila-titulo { min-width: 190px; }
 

@@ -192,9 +192,20 @@ permisos, agrupados en **Módulos** (qué aparece en su menú) y **Dentro de
 Checklists** (llenar, autorizar salidas, Reportes, Comparativa).
 
 Cada casilla es el permiso real de esa persona. Se marca y se desmarca
-libremente. Cuando el valor difiere de lo que trae su perfil, la casilla queda
-con **fondo azul**: es un ajuste manual. El botón **Restablecer** de esa fila
-devuelve a la persona a lo que su perfil determine.
+libremente y **nada se aplica hasta tocar «Guardar cambios»**: abajo aparece una
+barra con cuántos cambios llevas, y las casillas tocadas quedan con borde ámbar.
+**Descartar** los deshace todos.
+
+Se pueden reacomodar varias personas de una sola vez. La validación mira cómo
+queda cada quien **al final**, no cambio por cambio: así puedes quitarle un
+módulo y darle otro en la misma tanda. Si algo del lote es inválido, no se
+guarda nada — ni siquiera lo que sí era válido.
+
+El **fondo azul** marca un ajuste ya guardado que difiere de su perfil. El botón
+**Restablecer** de esa fila devuelve a la persona a lo que su perfil determine.
+
+> Si entre los cambios están los tuyos, la plataforma avisa antes de guardar:
+> cambiarte los permisos cierra tu propia sesión y tendrás que volver a entrar.
 
 Dos cosas que la plataforma no deja hacer:
 

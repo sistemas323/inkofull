@@ -476,7 +476,12 @@ async function vistaAcceso(claveModulo) {
 
   const reautentica = !!(modulo && modulo.reautenticar);
 
+  // Aviso de un solo uso, para explicar por qué se cerró la sesión.
+  const avisoPrevio = sessionStorage.getItem('avisoAlEntrar');
+  sessionStorage.removeItem('avisoAlEntrar');
+
   vista.innerHTML = `
+    ${avisoPrevio ? `<div class="aviso info">${esc(avisoPrevio)}</div>` : ''}
     ${modulo ? `<div class="migaja">
       <button data-volver>← Menú</button><span>/</span><span>${esc(modulo.nombre)}</span>
     </div>` : ''}
@@ -1768,8 +1773,9 @@ async function configPermisos(destino) {
     <div class="panel">
       <h2>Permisos por persona</h2>
       <p class="explica">
-        Marca o desmarca lo que quieras. El fondo azul indica un ajuste manual —
-        algo que le diste o le quitaste respecto a lo que trae su perfil.
+        Marca o desmarca lo que quieras y toca <b>Guardar cambios</b>: nada se
+        aplica hasta entonces. El fondo azul indica un ajuste ya guardado —
+        algo que le diste o le quitaste respecto a lo que trae su perfil;
         <b>Restablecer</b> lo devuelve a su perfil.
       </p>
       <div class="desliza"><table class="captura matriz-permisos">
@@ -1806,22 +1812,53 @@ async function configPermisos(destino) {
             </tr>`).join('')}
         </tbody>
       </table></div>
+    </div>
+
+    <div class="pie" id="barra-permisos" hidden>
+      <span class="resumen"></span>
+      <button class="btn" id="descartar-permisos">Descartar</button>
+      <button class="btn primario" id="guardar-permisos">Guardar cambios</button>
     </div>`;
 
-  const guardar = async (fila, cuerpo) => {
-    try {
-      await api('PUT', `/api/admin/usuarios/${fila.dataset.persona}/permiso`, cuerpo);
-      await recargarConfig();
-    } catch (err) {
-      mostrarMensaje(err.message, 'error');
-      await recargarConfig();
+  // Los cambios NO se guardan al tocar: se acumulan y se aplican con el botón.
+  // Así se puede reacomodar a varias personas y revisar antes de confirmar.
+  const pendientesPermisos = new Map();
+
+  const claveCambio = (usuarioId, permiso) => `${usuarioId}|${permiso}`;
+
+  const refrescarBarra = () => {
+    const barra = document.getElementById('barra-permisos');
+    const n = pendientesPermisos.size;
+    barra.hidden = n === 0;
+    if (n) {
+      barra.querySelector('.resumen').textContent =
+        n === 1 ? '1 cambio sin guardar' : `${n} cambios sin guardar`;
     }
   };
 
   destino.querySelectorAll('.casilla[data-permiso]').forEach((b) => {
     b.addEventListener('click', () => {
       const fila = b.closest('[data-persona]');
-      guardar(fila, { clave: b.dataset.permiso, valor: b.getAttribute('aria-pressed') !== 'true' });
+      const usuarioId = Number(fila.dataset.persona);
+      const permiso = b.dataset.permiso;
+      const nuevo = b.getAttribute('aria-pressed') !== 'true';
+
+      b.setAttribute('aria-pressed', String(nuevo));
+      const celda = b.closest('td');
+      celda.classList.add('pendiente-guardar');
+
+      const k = claveCambio(usuarioId, permiso);
+      // Si vuelve a su valor original, deja de ser un cambio pendiente.
+      const original = pendientesPermisos.get(k);
+      if (original && original.valorOriginal === nuevo) {
+        pendientesPermisos.delete(k);
+        celda.classList.remove('pendiente-guardar');
+      } else if (!original) {
+        pendientesPermisos.set(k, { usuario_id: usuarioId, clave: permiso, valor: nuevo, valorOriginal: !nuevo });
+      } else {
+        original.valor = nuevo;
+      }
+      refrescarBarra();
     });
   });
 
@@ -1835,6 +1872,43 @@ async function configPermisos(destino) {
       } catch (err) { mostrarMensaje(err.message, 'error'); }
     });
   });
+
+  document.getElementById('guardar-permisos').addEventListener('click', async (e) => {
+    const boton = e.currentTarget;
+    const cambios = [...pendientesPermisos.values()]
+      .map(({ usuario_id, clave, valor }) => ({ usuario_id, clave, valor }));
+
+    // Cambiarse los permisos a uno mismo cierra la propia sesión. Sin avisar,
+    // parecería que la plataforma se cayó justo al guardar.
+    const meAfectaAMi = cambios.some((c) => c.usuario_id === estado.usuario.id);
+    if (meAfectaAMi && !confirm(
+      'Entre los cambios están los tuyos.\n\n'
+      + 'Al guardarlos se cerrará tu sesión y tendrás que volver a entrar, '
+      + 'para que apliquen tus permisos nuevos.\n\n¿Guardar de todos modos?'
+    )) return;
+
+    boton.disabled = true;
+    try {
+      if (meAfectaAMi) sessionStorage.setItem('avisoAlEntrar', 'Tus permisos cambiaron. Vuelve a entrar para que apliquen.');
+      const r = await api('PUT', '/api/admin/permisos', { cambios });
+      pendientesPermisos.clear();
+      await recargarConfig();
+      mostrarMensaje(
+        `Permisos guardados: ${r.guardados} cambio(s) en ${r.personas} persona(s). Ya están aplicados.`,
+        'exito'
+      );
+    } catch (err) {
+      boton.disabled = false;
+      mostrarMensaje(err.message, 'error');
+    }
+  });
+
+  document.getElementById('descartar-permisos').addEventListener('click', async () => {
+    pendientesPermisos.clear();
+    await recargarConfig();
+  });
+
+  refrescarBarra();
 }
 
 async function vistaConfig(pestanaPedida) {
