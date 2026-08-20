@@ -1,0 +1,1 @@
+Coloca aquí OpenSans-Regular.woff2, OpenSans-SemiBold.woff2, OpenSans-Bold.woff2 y OpenSauceOne-Bold.woff2 para usar las tipografías corporativas exactas.

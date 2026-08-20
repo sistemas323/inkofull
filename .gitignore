@@ -1,0 +1,14 @@
+# Datos de la operación: NO se versionan.
+# Aquí viven la base de datos y las fotos de evidencia — información real del
+# almacén, con nombres y PIN del equipo. Un historial de versiones es para el
+# código, no para los datos. Su respaldo es la carpeta 'respaldos' y OneDrive.
+datos/
+
+# Node no se usa aquí (la plataforma no tiene dependencias), pero si algún día
+# se agregan, que no entren al historial.
+node_modules/
+
+# Basura del sistema
+Thumbs.db
+desktop.ini
+.DS_Store

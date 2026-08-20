@@ -1,0 +1,76 @@
+/* ==========================================================================
+   Sistema de marca INKO — Brand Book 2026
+   Los valores de esta sección salen del brandbook y no deben cambiarse sin él.
+   ========================================================================== */
+
+/* Las tipografías corporativas no vienen con la plataforma. Si se colocan los
+   archivos en public/fuentes/ se usan automáticamente; si no están, el
+   navegador cae al siguiente tipo de la lista sin romper nada. */
+@font-face {
+  font-family: 'Open Sans';
+  src: url('fuentes/OpenSans-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Open Sans';
+  src: url('fuentes/OpenSans-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Open Sans';
+  src: url('fuentes/OpenSans-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Open Sauce One';
+  src: url('fuentes/OpenSauceOne-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  /* --- Paleta corporativa (Brand Book p.13) --- */
+  --azul-inko: #002F5D;
+  --azul-oscuro: #001D3A;
+  --gris: #F3F6FA;
+  --negro: #111111;
+  --blanco: #FFFFFF;
+
+  /* --- Derivados del azul corporativo, solo para estados de interfaz --- */
+  --azul-claro: #E6EDF5;
+  --azul-medio: #1A4A78;
+  --azul-borde: #C9D6E4;
+
+  /* --- Colores de estado ---
+     No forman parte de la paleta de marca: son señalética funcional. Un
+     checklist necesita distinguir "bien" de "problema" de un vistazo, y el
+     azul corporativo no puede hacer ese trabajo. Ajustados para convivir
+     con el navy sin competir con él. */
+  --ok: #17693F;
+  --ok-suave: #E4F2EA;
+  --alerta: #A32219;
+  --alerta-suave: #FBEAE8;
+  --ambar: #8A5A00;
+  --ambar-suave: #FBF0DC;
+
+  /* --- Texto --- */
+  --tinta: var(--negro);
+  --tinta-suave: #5A6A7D;
+
+  /* --- Tipografía (Brand Book p.14) --- */
+  --fuente: 'Open Sans', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  --fuente-titulo: 'Open Sauce One', 'Open Sans', 'Segoe UI', system-ui, sans-serif;
+
+  /* --- Forma --- */
+  --radio: 12px;
+  --radio-grande: 18px;
+  --sombra: 0 1px 2px rgba(0, 47, 93, .06), 0 6px 18px rgba(0, 47, 93, .07);
+  --sombra-alta: 0 12px 34px rgba(0, 29, 58, .16);
+
+  /* Área de protección del logotipo (Brand Book p.9): el espacio libre
+     alrededor equivale a la altura de la contraforma del logo. */
+  --aire-logo: 0.6em;
+}
