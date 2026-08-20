@@ -529,12 +529,43 @@ Dos detalles de cómo lee los datos:
 
 ---
 
+## Puntos de retorno del código
+
+La carpeta `plataforma` es un repositorio Git. Cada vez que quieras dejar un
+punto al que poder volver:
+
+```bash
+git add -A && git commit -m "describe aquí qué cambió"
+```
+
+Ver el historial, y volver a un punto anterior si algo se rompe:
+
+```bash
+git log --oneline
+```
+
+```bash
+git checkout .
+```
+
+El último comando descarta los cambios no guardados y devuelve el código al
+último punto. **No toca los datos** — la carpeta `datos` está fuera del
+historial a propósito: un control de versiones es para el código, no para
+información real del equipo con sus nombres y PIN.
+
 ## Respaldos
 
 Toda la información vive en la carpeta **`datos`**: las respuestas y firmas en
 `checklists.db`, las fotos en `datos/fotos/`. Respalda la carpeta completa —
 la base y las fotos van juntas o el reporte queda con evidencia rota.
 Para restaurar, reemplázala (con la plataforma apagada).
+
+Para dejar una copia fechada en `respaldos/`, con la plataforma encendida o
+apagada (la copia sale consistente aunque alguien esté capturando):
+
+```bash
+node respaldar.js
+```
 
 La carpeta está dentro de OneDrive, así que ya se respalda sola — pero OneDrive
 sincroniza el archivo completo cada vez que cambia. Si con el tiempo se hace lento,
