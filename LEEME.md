@@ -123,8 +123,14 @@ lleva rato leyendo un reporte en su computadora.
 ### Si otro equipo no abre la dirección
 
 Casi siempre es el **Firewall de Windows**, no la plataforma. En esta computadora
-hay dos reglas que **bloquean Node.js** en redes públicas, y el wifi está
-clasificado como pública — así que ningún otro equipo puede entrar.
+hay **cuatro reglas que bloquean Node.js** — dos para redes públicas y dos para
+privadas — así que ningún otro equipo puede entrar, ni tablet ni celular.
+
+> **De dónde salen esas reglas:** cuando arrancas la plataforma, Windows pregunta
+> si permites que Node se comunique en la red. Si se responde **Cancelar** o
+> **Bloquear**, Windows crea una regla de bloqueo permanente. Ha pasado dos
+> veces. Si el aviso vuelve a salir, elige **Permitir acceso** y marca las dos
+> casillas (redes privadas y públicas).
 
 Para arreglarlo, abre **PowerShell como administrador** (clic derecho en Inicio →
 *Terminal (Administrador)*) y corre estos dos comandos:
@@ -137,17 +143,29 @@ Remove-NetFirewallRule -DisplayName "Node.js JavaScript Runtime" -ErrorAction Si
 New-NetFirewallRule -DisplayName "Sistema Digital INKO" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Any -RemoteAddress LocalSubnet
 ```
 
-El primero quita el bloqueo —se creó solo cuando alguien respondió "Cancelar" al
-aviso de Windows—. El segundo abre **únicamente el puerto 3000 y solo para equipos
-de tu propia red** (`LocalSubnet`), que es lo mínimo necesario: no expone nada a
-internet.
+El primero borra **las cuatro** reglas de bloqueo. El segundo abre **únicamente
+el puerto 3000 y solo para equipos de tu propia red** (`LocalSubnet`), que es lo
+mínimo necesario: no expone nada a internet.
+
+Para comprobar que quedó bien, en la misma ventana:
+
+```powershell
+Get-NetFirewallRule -DisplayName "Node.js JavaScript Runtime" -ErrorAction SilentlyContinue | Measure-Object | Select-Object Count
+```
+
+Debe decir **0**. Si dice otra cosa, las reglas de bloqueo siguen ahí.
 
 No los corrí por ti a propósito. El firewall es una defensa del equipo y esa
 decisión debe tomarla una persona, no quedar dentro de un script.
 
-**Si aun así no entra**, el sospechoso es la **VPN de McAfee** que está activa en
-esta computadora: cuando enruta el tráfico puede tapar la red local. Pruébalo
-desconectándola un momento.
+**Si aun así no entra**, revisa en este orden:
+
+1. **La VPN de McAfee** está activa en esta computadora y cuando enruta el
+   tráfico puede tapar la red local. Desconéctala un momento y prueba.
+2. **El celular debe estar en el wifi del almacén**, no en datos móviles. La
+   dirección `192.168.100.5` solo existe dentro de esa red.
+3. **La dirección cambia** si la computadora se reconecta. La buena siempre es la
+   que aparece en la ventana negra al arrancar.
 
 ---
 
