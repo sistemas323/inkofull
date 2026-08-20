@@ -12,3 +12,6 @@ node_modules/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Copias de seguridad de los datos: mismo motivo que 'datos'.
+respaldos/
