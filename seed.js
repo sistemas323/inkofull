@@ -368,6 +368,67 @@ const USUARIOS = [
   { nombre: 'Administrador', rol: 'admin', pin: '1234' },
 ];
 
+// --------------------------------------------------------------- calidad
+
+// La hoja MATERIALES de MUESTREO_GUIADO.xlsx, transcrita renglón por renglón.
+// Orden de las columnas: modelo, color de impresión, marca de término, tipo de
+// centro, GAP, etiquetas por rollo, colores disponibles, diámetro de
+// referencia, centro de referencia. Vacío = el Excel tampoco lo traía.
+const MATERIALES = [
+  ['80X70', 'NEGRO', 'SI', 'PANAL', 'N/A', '55 m', 'Blanco, verde, azul, rosa, naranja, amarillo, morado', '', '1" ext / 1/2" int'],
+  ['80X80', 'NEGRO', 'SI', 'PANAL', 'N/A', '70 m', 'Blanco', '', '1" ext / 1/2" int'],
+  ['80X50', 'NEGRO', 'SI', 'PANAL', 'N/A', '20 m', 'Blanco', '50 mm', '1" ext / 1/2" int'],
+  ['57X30 ROLLO', 'NEGRO', 'SI', 'POPOTE', 'N/A', '12 m', 'Blanco, rosa, azul, amarillo', '', '1/2"'],
+  ['57X40 ROLLO', 'NEGRO', 'SI', 'POPOTE', 'N/A', '20 m', 'Blanco, morado, verde, rosa, amarillo, azul, naranja', '', '1/2"'],
+  ['57X45', 'NEGRO', 'SI', 'POPOTE', 'N/A', '27 m', 'Blanco', '', '1/2"'],
+  ['57X60', 'NEGRO', 'SI', 'PANAL', 'N/A', '40 m', 'Blanco', '', '1" ext / 1/2" int'],
+  ['51X25', 'NEGRO', 'NA', 'CARTON', '3', '1000', 'Blanco, verde, amarillo, naranja, plateado', '78-80 mm', '1"'],
+  ['57X30 CONTINUA', 'NEGRO', 'NA', 'POPOTE', 'N/A', '6 m', 'Blanco, azul', '30 mm', '1/2"'],
+  ['57X40 BASCULA', 'NEGRO', 'NA', 'CARTON', '3', '1000', 'Blanco', '95-100 mm', '1.5"'],
+  ['63X22 JOYERIA', 'NEGRO', 'NA', 'CARTON', '3', '1000', 'Blanco', '85-95 mm', '1"'],
+  ['22X16', 'NEGRO', 'NA', 'CARTON', '3', '2000', 'Blanco', '52-55 mm', '1"'],
+  ['38X25', 'NEGRO', 'NA', 'CARTON', '3', '1000', 'Blanco, naranja, amarillo, rojo, verde', '78-80 mm', '1"'],
+  ['40X30 MINI', 'NEGRO', 'NA', 'CARTON', '3', '200', 'Blanco', '48-50 mm', '1"'],
+  ['40X30', 'NEGRO', 'NA', 'CARTON', '3', '800', 'Blanco', '68-70 mm', '1"'],
+  ['4X1', 'NEGRO', 'NA', 'CARTON', '3', '2500', 'Blanco, amarillo', '110 mm', '1"'],
+  ['4X2', 'NEGRO', 'NA', 'CARTON', '3', '1500', 'Blanco, amarillo', '128 mm', '1"'],
+  ['4X3', 'NEGRO', 'NA', 'CARTON', '3', '1000', 'Blanco, amarillo', '120 mm', '1"'],
+  ['4X4', 'NEGRO', 'NA', 'CARTON', '3', '500', 'Blanco, amarillo', '103 mm', '1"'],
+  ['4X6', 'NEGRO', 'NA', 'CARTON', '3', '200', 'Blanco, azul, verde, amarillo, rosa, naranja, rojo', '78 mm', '1"'],
+  ['4X8', 'NEGRO', 'NA', 'CARTON', '3', '200', 'Blanco', '90 mm', '1"'],
+  ['51 CIRCULO', 'NEGRO', 'NA', 'CARTON', 'N/A', '750', 'Blanco, amarillo, verde, azul, rojo, morado, azul reflex, rosa, naranja', '88-90 mm', '1"'],
+  ['62 BROTHER DK2205', 'NEGRO', 'NA', 'CARTON', 'N/A', '30.5 m', 'Blanco, amarillo, verde, azul, rojo', '', '1"'],
+  ['29 BROTHER DK2210', 'NEGRO', 'NA', 'CARTON', 'N/A', '30.5 m', 'Blanco', '', '1"'],
+  ['17X54 BROTHER DK1204', 'NEGRO', 'NA', 'CARTON', '5', '400', 'Blanco', '', '1"'],
+  ['29X90 BROTHER DK1201', 'NEGRO', 'NA', 'CARTON', '6', '400', 'Blanco', '', '1"'],
+  ['3X2 (76X51)', 'NEGRO', 'NA', 'CARTON', '3', '250', 'Blanco', '65 mm', '1"'],
+  ['3X1 (76X25)', 'NEGRO', 'NA', 'CARTON', '3', '1000', 'Blanco', '', '1"'],
+];
+
+// Columnas PROVEEDORES y COLORES FONDO de la misma hoja.
+const PROVEEDORES = ['PROYECTO X', 'CREAFLEX', 'PAPER & ROLL', 'GARIN', 'BAO BROTHER', 'COSMOTAG'];
+const FONDOS = ['BLANCO', 'VERDE', 'AZUL', 'ROSA', 'NARANJA', 'AMARILLO', 'LILA', 'ROJO', 'PLATEADO', 'AZUL REFLEX', 'NATURAL'];
+
+// Idempotente igual que el resto: solo inserta lo que falta, así que quien ya
+// dio de alta un material nuevo desde Configuración no lo ve duplicarse.
+function sembrarCalidad() {
+  const existeMaterial = db.prepare('SELECT id FROM materiales WHERE modelo = ?');
+  const insertMaterial = db.prepare(`
+    INSERT INTO materiales (modelo, color_impresion, marca_termino, tipo_centro, gap,
+                            cant_x_rollo, colores, diam_referencia, centro_referencia, orden)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  MATERIALES.forEach((m, i) => {
+    if (!existeMaterial.get(m[0])) insertMaterial.run(...m, i);
+  });
+
+  const insertCatalogo = db.prepare(
+    'INSERT OR IGNORE INTO catalogo_calidad (tipo, valor, orden) VALUES (?, ?, ?)'
+  );
+  PROVEEDORES.forEach((v, i) => insertCatalogo.run('proveedor', v, i));
+  FONDOS.forEach((v, i) => insertCatalogo.run('fondo', v, i));
+}
+
 function sembrar() {
   const insertActivo = db.prepare(
     'INSERT INTO activos (clave, nombre, tipo, atributos) VALUES (?, ?, ?, ?)'
@@ -422,6 +483,8 @@ function sembrar() {
     });
     nuevas++;
   });
+
+  sembrarCalidad();
 
   completarSecciones();
   sincronizarEstructura();

@@ -349,4 +349,118 @@ agregarColumna('plantillas', 'foto_obligatoria', 'INTEGER NOT NULL DEFAULT 0', (
   db.exec("UPDATE plantillas SET foto_obligatoria = 1 WHERE clave IN ('unidad', 'montacargas')");
 });
 
+// ------------------------------------------------------------------ calidad
+
+// Muestreo de material que llega de proveedor. Viene de MUESTREO_GUIADO.xlsx.
+// No reusa plantillas/items: aquello es una lista de preguntas iguales para
+// todos, y esto es un renglón de datos por lote con su propia aritmética.
+db.exec(`
+-- La hoja MATERIALES del Excel: la especificación contra la que se compara el
+-- producto físico. Antes vivía en una hoja protegida con contraseña; aquí se
+-- edita desde Configuración sin tocar fórmulas.
+CREATE TABLE IF NOT EXISTS materiales (
+  id                INTEGER PRIMARY KEY,
+  modelo            TEXT    NOT NULL UNIQUE,
+  color_impresion   TEXT,
+  marca_termino     TEXT,
+  tipo_centro       TEXT,
+  gap               TEXT,
+  cant_x_rollo      TEXT,
+  colores           TEXT,
+  diam_referencia   TEXT,
+  centro_referencia TEXT,
+  orden             INTEGER NOT NULL DEFAULT 0,
+  activo            INTEGER NOT NULL DEFAULT 1
+);
+
+-- Proveedores y colores de fondo. Son dos listas de una sola columna; meterlas
+-- en la misma tabla con un 'tipo' evita escribir el mismo alta/baja dos veces.
+CREATE TABLE IF NOT EXISTS catalogo_calidad (
+  id     INTEGER PRIMARY KEY,
+  tipo   TEXT    NOT NULL,
+  valor  TEXT    NOT NULL,
+  orden  INTEGER NOT NULL DEFAULT 0,
+  activo INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (tipo, valor)
+);
+
+-- Una recepción es una remisión: lo que bajó de un camión. Adentro van los
+-- lotes, uno por modelo. En papel esto era un renglón suelto por lote y la
+-- remisión se repetía a mano en cada uno.
+CREATE TABLE IF NOT EXISTS recepciones (
+  id            INTEGER PRIMARY KEY,
+  remision      TEXT    NOT NULL,
+  proveedor     TEXT    NOT NULL,
+  fecha_llegada TEXT    NOT NULL,
+  usuario_id    INTEGER NOT NULL REFERENCES usuarios(id),
+  -- borrador | cerrado
+  estado        TEXT    NOT NULL DEFAULT 'borrador',
+  notas         TEXT,
+  creado_en     TEXT    NOT NULL,
+  cerrado_en    TEXT,
+  cerrado_por   INTEGER REFERENCES usuarios(id),
+  UNIQUE (proveedor, remision)
+);
+
+CREATE TABLE IF NOT EXISTS lotes (
+  id            INTEGER PRIMARY KEY,
+  recepcion_id  INTEGER NOT NULL REFERENCES recepciones(id) ON DELETE CASCADE,
+  material_id   INTEGER NOT NULL REFERENCES materiales(id),
+  fondo         TEXT,
+  -- Lo que llegó: cajas x rollos por caja, o el total de rollos directo.
+  cant_cajas    INTEGER,
+  rollos_x_caja INTEGER,
+  cant_rollos   INTEGER,
+  -- Calculados por el servidor y congelados al cerrar. En el Excel eran dos
+  -- fórmulas que cualquiera podía sobrescribir con un número a mano.
+  total_lote    INTEGER,
+  muestra       INTEGER,
+  -- Lo que se revisa y el veredicto, tal como en la hoja de papel.
+  diametro      TEXT,
+  medida_centro TEXT,
+  nitida        TEXT,
+  resultado     TEXT,
+  observacion   TEXT,
+  -- Seguimiento del lote rechazado. La disposición la registra quien tenga
+  -- 'calidad_resolver' y no surte efecto hasta que otra persona la confirma:
+  -- decidir qué pasa con material rechazado no debe quedar en una sola mano.
+  disposicion      TEXT,
+  disposicion_nota TEXT,
+  dispuesto_por    INTEGER REFERENCES usuarios(id),
+  dispuesto_en     TEXT,
+  confirmado_por   INTEGER REFERENCES usuarios(id),
+  confirmado_en    TEXT,
+  orden         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS firmas_calidad (
+  id           INTEGER PRIMARY KEY,
+  recepcion_id INTEGER NOT NULL REFERENCES recepciones(id) ON DELETE CASCADE,
+  rol          TEXT    NOT NULL,
+  usuario_id   INTEGER REFERENCES usuarios(id),
+  nombre       TEXT    NOT NULL,
+  imagen       TEXT    NOT NULL,
+  firmado_en   TEXT    NOT NULL,
+  UNIQUE (recepcion_id, rol)
+);
+
+-- Misma decisión que en 'fotos': el archivo vive en datos/fotos/ y aquí solo su
+-- nombre. lote_id NULL = evidencia de toda la recepción (las pruebas de
+-- impresión que la hoja de papel pedía adjuntar siempre).
+CREATE TABLE IF NOT EXISTS fotos_calidad (
+  id           INTEGER PRIMARY KEY,
+  recepcion_id INTEGER NOT NULL REFERENCES recepciones(id) ON DELETE CASCADE,
+  lote_id      INTEGER REFERENCES lotes(id) ON DELETE CASCADE,
+  archivo      TEXT    NOT NULL UNIQUE,
+  bytes        INTEGER NOT NULL,
+  subida_por   INTEGER REFERENCES usuarios(id),
+  subida_en    TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lotes_recepcion ON lotes (recepcion_id);
+CREATE INDEX IF NOT EXISTS idx_lotes_resultado ON lotes (resultado);
+CREATE INDEX IF NOT EXISTS idx_recepciones_fecha ON recepciones (fecha_llegada);
+CREATE INDEX IF NOT EXISTS idx_fotos_calidad_lote ON fotos_calidad (lote_id);
+`);
+
 module.exports = { db, DATA_DIR, FOTOS_DIR };

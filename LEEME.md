@@ -49,9 +49,9 @@ encendida y pudo cambiar de manos, se confirma otra vez.
 | Módulo | Estado | Quién entra |
 |---|---|---|
 | **Checklists** | Funcionando | Todo el equipo |
+| **Calidad** | Funcionando | Team Leaders y Administrador |
 | Inventario | Próximamente | — |
 | Ventas por fuera | Próximamente | — |
-| Calidad | Próximamente | — |
 | ODT de la semana | Próximamente | — |
 | **Configuración** | Funcionando | Solo Administrador |
 
@@ -194,6 +194,9 @@ Existen tres perfiles, ni uno más:
 El mismo permiso cubre tres cosas: la firma de autorización del montacargas, la
 autorización de salida de Tránsito y el cierre de su proceso.
 
+**Calidad tiene su propia columna de permisos**, aparte de estos. Está descrita en
+la sección *Calidad* más abajo.
+
 ### Configuración, por secciones
 
 | Pestaña | Qué tiene |
@@ -202,6 +205,7 @@ autorización de salida de Tránsito y el cierre de su proceso.
 | **Permisos** | Matriz persona × permiso: se otorga y se quita con un toque |
 | **Unidades** | Camionetas y montacargas, con sus parámetros |
 | **Checklists** | Qué formatos existen y cuáles están en circulación |
+| **Materiales** | Catálogo de Calidad: modelos, proveedores y colores de fondo |
 
 ### La matriz de permisos
 
@@ -515,6 +519,135 @@ Calculando grueso: 3 unidades × 1 revisión semanal × 2 fotos ≈ **60 MB al a
 Se pueden quitar fotos mientras el checklist siga abierto. Una vez cerrado, las
 fotos quedan fijas junto con las firmas.
 
+## Calidad: el muestreo del material que llega
+
+Viene del archivo `MUESTREO_GUIADO.xlsx`. Cubre la inspección de los rollos de
+etiqueta que bajan del camión del proveedor.
+
+**La unidad de captura es la remisión, no el renglón.** Llega un camión con la
+remisión 4821 de Creaflex y trae tres modelos: se abre **una** recepción con esos
+tres lotes adentro y una sola firma. En papel la remisión se volvía a escribir en
+cada renglón.
+
+### Cómo se llena
+
+**1. Nueva recepción.** Se elige proveedor, se escribe el número de remisión y la
+fecha de llegada. La fecha viene puesta con la de hoy.
+
+> No deja capturar dos veces la misma remisión del mismo proveedor. En papel eso
+> pasaba cuando alguien retomaba una hoja a medias.
+
+**2. Se agrega un lote por cada modelo** que traía el camión, con su color de fondo.
+
+**3. Se anota cuánto llegó** — cajas × rollos por caja, o el total de rollos si ya
+se sabe. La tablet contesta sola **cuántos revisar**.
+
+**4. Debajo aparece la especificación** de ese modelo: color de impresión, marca de
+término, tipo de centro, GAP, etiquetas por rollo y las medidas de referencia. No se
+escribe: se compara contra el producto que se tiene en la mano. Es la columna gris
+del Excel.
+
+**5. Se anota lo que se revisa** — diámetro medido y medida del centro — y el
+**veredicto: Aprobado o Rechazado**.
+
+**6. Se firma y se cierra.**
+
+### Cuántos revisar
+
+`raíz cuadrada del lote, redondeada hacia arriba`. Un lote de 500 rollos pide 23; uno
+de 100 pide 10; uno de 2000 pide 45. Es la misma regla que traía el Excel.
+
+**La diferencia es quién la calcula.** En el Excel era una fórmula en una celda, y una
+fórmula se puede sobrescribir con un número escrito a mano sin que nadie se entere.
+Aquí la cuenta la hace el servidor y queda congelada al cerrar la recepción.
+
+### Cuando un lote sale rechazado
+
+**No cierra sin observación escrita y sin foto del defecto.** Es el mismo criterio
+que ya usan los checklists de unidades: un rechazo sin motivo ni evidencia no le
+sirve a nadie tres semanas después, cuando haya que reclamarle al proveedor.
+
+**Y necesita la firma de autorización de un Team Leader.** El recuadro para
+levantarla aparece en cuanto se marca el primer Rechazado.
+
+> Si todos los lotes salieron aprobados, esa segunda firma **no** se pide. Un camión
+> que llegó bien no tiene por qué esperar a que haya un Team Leader disponible; uno
+> con material defectuoso sí, porque ahí empieza una reclamación. Si prefieres
+> exigirla siempre, es quitar la condición `hayRechazo(recepcion) &&` en la ruta de
+> cierre, en `server.js`.
+
+### El lote rechazado no desaparece al cerrar
+
+Pasa a **Calidad → Rechazados**, y ahí vive hasta que se resuelva. Tiene tres
+momentos:
+
+| Estado | Qué falta |
+|---|---|
+| **Sin resolver** | Nadie ha dicho qué se hace con el material |
+| **Por confirmar** | Ya se decidió, falta que otra persona lo respalde |
+| **Cerrado** | Decidido y confirmado, con los dos nombres registrados |
+
+**Quién decide.** Solo quien tenga el permiso *Resolver lotes rechazados* — hoy, el
+Administrador. Elige entre cuatro salidas y puede dejar una nota:
+
+- Devuelto al proveedor
+- Aceptado con concesión
+- Reclamo / nota de crédito
+- Reproceso o selección
+
+**Quién confirma.** Un Team Leader o el Administrador — **pero nunca la misma persona
+que decidió**. La plataforma lo rechaza. Eso es lo que hace que sea un acuerdo de dos
+y no el trámite de uno solo; sin esa regla, el Administrador podría decidir y
+confirmar en el mismo toque y la segunda firma no significaría nada.
+
+El aviso de la portada de Calidad cuenta los rechazos que siguen abiertos, para que
+no se queden olvidados.
+
+### El catálogo, en Configuración
+
+La hoja MATERIALES del Excel es ahora **Configuración → Materiales**: los 28 modelos
+con su especificación, los 6 proveedores y los 11 colores de fondo. Se corrige un
+dato y se guarda al salir del campo.
+
+**El modelo no se renombra**, a propósito: los muestreos ya capturados apuntan a ese
+renglón y cambiarle el nombre reescribiría su historia. Para retirar un modelo se
+desmarca *En uso* — deja de ofrecerse en la tablet y los muestreos viejos lo siguen
+mostrando. Lo mismo con los proveedores y los colores.
+
+> En el Excel esta hoja estaba protegida con contraseña de administrador, porque
+> tocarla rompía las fórmulas de la hoja de muestreo. Aquí no hay fórmulas que
+> romper.
+
+### Quién entra a Calidad
+
+| Perfil | Captura | Firma la autorización | Decide el destino | Reportes |
+|---|:---:|:---:|:---:|:---:|
+| Operador | — | — | — | — |
+| **Team Leader** | **sí** | **sí** | — | **sí** |
+| **Administrador** | **sí** | **sí** | **sí** | **sí** |
+
+Los Team Leaders traen Calidad incluida porque alguien tiene que poder firmar la
+autorización de un rechazo. **A un operador se le da desde Configuración → Permisos**:
+se le marca *Calidad* y *Capturar muestreos* y con eso le aparece el módulo.
+
+> Quien vea los **Reportes de Calidad** necesita PIN, igual que con los de
+> Checklists. Si vas a dar de alta a alguien de calidad que hoy no tiene PIN,
+> asígnale uno primero en la pestaña Personas.
+
+### Reportes
+
+Además del detalle lote por lote, saca el **índice de rechazo por proveedor** —
+cuántos lotes le compraste, cuántos le rechazaste y qué porcentaje sale. Es la
+pregunta que la hoja de papel no podía contestar sin volver a leer todo el archivero.
+
+En el detalle, junto al diámetro que se midió aparece el de referencia del catálogo,
+para ver de un vistazo qué tan lejos quedó.
+
+**Se exporta a Excel** con el mismo botón de siempre. Eso sustituye al
+*Ctrl + P → Guardar como PDF* del archivo viejo.
+
+---
+
 ## Uso diario
 
 **El equipo:** toca su nombre → elige el checklist → contesta → firma → *Cerrar y enviar*.
@@ -610,6 +743,11 @@ mueve la carpeta `plataforma` fuera de OneDrive y programa una copia diaria de `
 - Los checklists no están escritos en el código: viven en la base de datos
   (`plantillas` → `secciones` → `items`). `seed.js` solo hace la carga inicial y es
   idempotente — no duplica nada si se vuelve a correr.
+- **Calidad tiene tablas propias** (`materiales`, `catalogo_calidad`, `recepciones`,
+  `lotes`) en vez de reusar las de checklists. Un checklist es una lista de preguntas
+  iguales para todos; un muestreo es un renglón de datos con aritmética propia.
+  Forzarlo dentro de `items`/`respuestas` habría hecho ilegibles las dos cosas.
+  Lo que sí comparte: usuarios, permisos, la carpeta de fotos y el lienzo de firma.
 - **La seguridad actual asume red local.** Los PIN se guardan en texto plano y las
   sesiones viven en memoria. Es adecuado para una tablet que no sale del almacén.
   Si algún día quieres que se use desde fuera (celular del operador en ruta), hay
@@ -624,7 +762,7 @@ plataforma/
   server.js                ← servidor, API, MODULOS y PERMISOS
   db.js                    ← estructura de la base de datos
   fechas.js                ← semanas ISO (agrupar y comparar)
-  seed.js                  ← los checklists transcritos del papel
+  seed.js                  ← los checklists y el catálogo de materiales, transcritos
   public/
     index.html             ← reposo, barra y contenedor
     app.js                 ← navegación y todas las pantallas
@@ -632,8 +770,8 @@ plataforma/
     estilos.css            ← componentes de la interfaz
     marca/                 ← logotipo en sus dos versiones autorizadas
     fuentes/               ← aquí van los .woff2 corporativos
-  datos/checklists.db      ← respuestas, firmas y observaciones
-  datos/fotos/             ← las fotos de evidencia
+  datos/checklists.db      ← respuestas, firmas, muestreos y observaciones
+  datos/fotos/             ← las fotos de evidencia (checklists y Calidad)
 ```
 
 ### Cómo se agrega un módulo nuevo

@@ -28,10 +28,16 @@ const PERMISOS = {
     etiqueta: 'Team Leader',
     descripcion: 'Llena, autoriza salidas y consulta Reportes',
     mod_checklists: true,
+    // Calidad viene incluida porque un lote rechazado no cierra sin la firma de
+    // un Team Leader. Sin acceso al módulo, la firma no tendría quién la levante.
+    mod_calidad: true,
     llenar: true,
     firmar_operador: true,
     firmar_supervision: true,
     reportes: true,
+    calidad_capturar: true,
+    calidad_autorizar: true,
+    calidad_reportes: true,
   },
   admin: {
     etiqueta: 'Administrador',
@@ -48,6 +54,10 @@ const PERMISOS = {
     reportes: true,
     comparativa: true,
     configuracion: true,
+    calidad_capturar: true,
+    calidad_autorizar: true,
+    calidad_resolver: true,
+    calidad_reportes: true,
   },
 };
 
@@ -76,6 +86,16 @@ const CATALOGO_PERMISOS = [
       { clave: 'comparativa', etiqueta: 'Comparativa entre semanas' },
     ],
   },
+  {
+    grupo: 'Dentro de Calidad',
+    ayuda: 'Funciones del módulo de Calidad.',
+    permisos: [
+      { clave: 'calidad_capturar', etiqueta: 'Capturar muestreos' },
+      { clave: 'calidad_autorizar', etiqueta: 'Firmar y confirmar rechazos' },
+      { clave: 'calidad_resolver', etiqueta: 'Resolver lotes rechazados' },
+      { clave: 'calidad_reportes', etiqueta: 'Reportes de Calidad' },
+    ],
+  },
 ];
 
 const PERMISOS_VALIDOS = new Set(CATALOGO_PERMISOS.flatMap((g) => g.permisos.map((p) => p.clave)));
@@ -86,7 +106,10 @@ const ETIQUETA_DE_PERMISO = Object.fromEntries(
 
 // Ver información de toda la operación obliga a tener PIN, venga del perfil o de
 // un permiso individual.
-const PERMISOS_SENSIBLES = ['reportes', 'comparativa', 'configuracion', 'mod_configuracion'];
+const PERMISOS_SENSIBLES = [
+  'reportes', 'comparativa', 'configuracion', 'mod_configuracion',
+  'calidad_reportes', 'calidad_resolver',
+];
 
 // Se permiten letras además de dígitos: el equipo usa claves con significado
 // (área + año + iniciales). Obligarlas a ser numéricas invalidaría las que ya
@@ -157,9 +180,9 @@ const MODULOS = [
   {
     clave: 'calidad',
     nombre: 'Calidad',
-    descripcion: 'Muestreo, pruebas e incidencias',
+    descripcion: 'Muestreo de material recibido de proveedor',
     permiso: 'mod_calidad',
-    disponible: false,
+    disponible: true,
     icono: 'calidad',
   },
   {
@@ -812,6 +835,25 @@ const EXTENSION = {
 };
 const LIMITE_FOTO = 6 * 1024 * 1024;
 
+// Decodifica el data: URL que manda la tablet y lo deja escrito en datos/fotos/.
+// Lo usan los checklists y Calidad: misma carpeta, mismas validaciones y mismo
+// nombre aleatorio; lo único que cambia es en qué tabla se anota después.
+function guardarArchivoSubido(datos) {
+  const partes = /^data:(image\/(?:jpeg|png|webp)|application\/pdf);base64,([A-Za-z0-9+/]+={0,2})$/
+    .exec(datos || '');
+  if (!partes) return { codigo: 400, error: 'El archivo no es una imagen ni un PDF' };
+
+  const binario = Buffer.from(partes[2], 'base64');
+  if (binario.length === 0) return { codigo: 400, error: 'La imagen llegó vacía' };
+  if (binario.length > LIMITE_FOTO) return { codigo: 413, error: 'La foto pesa demasiado' };
+
+  // Nombre aleatorio: nunca se usa el que trae el dispositivo, así no hay forma
+  // de que un nombre malicioso escriba fuera de datos/fotos.
+  const archivo = `${crypto.randomBytes(16).toString('hex')}.${EXTENSION[partes[1]]}`;
+  fs.writeFileSync(path.join(FOTOS_DIR, archivo), binario);
+  return { archivo, bytes: binario.length };
+}
+
 ruta('POST', '/api/llenados/(\\d+)/fotos', (req, res, p, cuerpo) => {
   const usuario = exigir(req, res);
   if (!usuario) return;
@@ -838,18 +880,8 @@ ruta('POST', '/api/llenados/(\\d+)/fotos', (req, res, p, cuerpo) => {
     }
   }
 
-  const partes = /^data:(image\/(?:jpeg|png|webp)|application\/pdf);base64,([A-Za-z0-9+/]+={0,2})$/
-    .exec(cuerpo.imagen || '');
-  if (!partes) return json(res, 400, { error: 'El archivo no es una imagen ni un PDF' });
-
-  const binario = Buffer.from(partes[2], 'base64');
-  if (binario.length === 0) return json(res, 400, { error: 'La imagen llegó vacía' });
-  if (binario.length > LIMITE_FOTO) return json(res, 413, { error: 'La foto pesa demasiado' });
-
-  // Nombre aleatorio: nunca se usa el que trae el dispositivo, así no hay forma
-  // de que un nombre malicioso escriba fuera de datos/fotos.
-  const archivo = `${crypto.randomBytes(16).toString('hex')}.${EXTENSION[partes[1]]}`;
-  fs.writeFileSync(path.join(FOTOS_DIR, archivo), binario);
+  const guardado = guardarArchivoSubido(cuerpo.imagen);
+  if (guardado.error) return json(res, guardado.codigo, { error: guardado.error });
 
   const { lastInsertRowid } = db.prepare(`
     INSERT INTO fotos (llenado_id, item_id, columna, archivo, bytes, subida_por, subida_en)
@@ -858,15 +890,15 @@ ruta('POST', '/api/llenados/(\\d+)/fotos', (req, res, p, cuerpo) => {
     llenadoId,
     cuerpo.item_id ? Number(cuerpo.item_id) : null,
     cuerpo.columna || '-',
-    archivo, binario.length, usuario.id, new Date().toISOString()
+    guardado.archivo, guardado.bytes, usuario.id, new Date().toISOString()
   );
 
   json(res, 200, {
     id: Number(lastInsertRowid),
-    archivo,
+    archivo: guardado.archivo,
     item_id: cuerpo.item_id ? Number(cuerpo.item_id) : null,
     columna: cuerpo.columna || '-',
-    bytes: binario.length,
+    bytes: guardado.bytes,
     subida_por: usuario.nombre,
   });
 });
@@ -1193,6 +1225,509 @@ ruta('GET', '/api/exportar.csv', (req, res) => {
   res.end('﻿' + csv); // BOM para que Excel respete los acentos
 });
 
+// ------------------------------------------------------------------ calidad
+
+// Tamaño de muestra: raíz cuadrada del lote redondeada hacia arriba. Es la
+// misma regla que traía el Excel — ROUNDUP(SQRT(n)) —, pero calculada aquí para
+// que nadie pueda escribir a mano un número más chico encima de la fórmula.
+const tamanoMuestra = (total) => (total > 0 ? Math.ceil(Math.sqrt(total)) : 0);
+
+// Las tres opciones del menú desplegable de la hoja de papel.
+const MEDIDAS_CENTRO = ['1/2 PULGADA', '1 PULGADA', '1.5 PULGADAS'];
+
+// Qué se hace con un lote rechazado.
+const DISPOSICIONES = [
+  { clave: 'devuelto', etiqueta: 'Devuelto al proveedor' },
+  { clave: 'concesion', etiqueta: 'Aceptado con concesión' },
+  { clave: 'reclamo', etiqueta: 'Reclamo / nota de crédito' },
+  { clave: 'reproceso', etiqueta: 'Reproceso o selección' },
+];
+const ETIQUETA_DISPOSICION = Object.fromEntries(DISPOSICIONES.map((d) => [d.clave, d.etiqueta]));
+
+// Las dos firmas de la hoja. 'calidad' es quien la llenó — el renglón "Elaboró"
+// del papel. 'autorizacion' es la que decía "Firma Coordinador"; como ese perfil
+// ya no existe, hoy la levanta un Team Leader.
+const FIRMAS_CALIDAD = {
+  calidad: 'calidad_capturar',
+  autorizacion: 'calidad_autorizar',
+};
+
+function recepcionCompleta(id) {
+  const recepcion = db.prepare(`
+    SELECT r.*, u.nombre AS capturo, c.nombre AS cerro
+    FROM recepciones r
+    JOIN usuarios u ON u.id = r.usuario_id
+    LEFT JOIN usuarios c ON c.id = r.cerrado_por
+    WHERE r.id = ?
+  `).get(id);
+  if (!recepcion) return null;
+
+  recepcion.lotes = db.prepare(`
+    SELECT l.*, m.modelo, m.color_impresion, m.marca_termino, m.tipo_centro,
+           m.gap, m.cant_x_rollo, m.diam_referencia, m.centro_referencia,
+           d.nombre AS dispuso, f.nombre AS confirmo
+    FROM lotes l
+    JOIN materiales m ON m.id = l.material_id
+    LEFT JOIN usuarios d ON d.id = l.dispuesto_por
+    LEFT JOIN usuarios f ON f.id = l.confirmado_por
+    WHERE l.recepcion_id = ? ORDER BY l.orden, l.id
+  `).all(id).map((l) => ({ ...l, disposicion_etiqueta: l.disposicion ? ETIQUETA_DISPOSICION[l.disposicion] : null }));
+
+  recepcion.firmas = db
+    .prepare('SELECT rol, nombre, imagen, firmado_en FROM firmas_calidad WHERE recepcion_id = ?')
+    .all(id);
+  recepcion.fotos = db
+    .prepare('SELECT id, lote_id, archivo FROM fotos_calidad WHERE recepcion_id = ? ORDER BY id')
+    .all(id);
+  return recepcion;
+}
+
+// Lo que impide cerrar una recepción. Se devuelve la lista completa y no el
+// primer tropiezo: quien captura prefiere ver todo lo que le falta de una vez.
+function faltantesDeRecepcion(recepcion) {
+  const faltas = [];
+  if (!recepcion.lotes.length) faltas.push('Agrega al menos un lote.');
+
+  for (const l of recepcion.lotes) {
+    const cual = `«${l.modelo}${l.fondo ? ' ' + l.fondo : ''}»`;
+    if (!l.total_lote) { faltas.push(`${cual}: falta anotar cuánto llegó.`); continue; }
+    if (!(l.diametro || '').trim()) faltas.push(`${cual}: falta el diámetro medido.`);
+    if (!l.medida_centro) faltas.push(`${cual}: falta la medida del centro.`);
+    if (!l.nitida) faltas.push(`${cual}: falta contestar si la impresión es nítida.`);
+    if (!l.resultado) faltas.push(`${cual}: falta el resultado.`);
+
+    // Un rechazo sin motivo escrito ni foto no le sirve a nadie después: es
+    // exactamente lo que se perdía en papel cuando solo se tachaba la casilla.
+    if (l.resultado === 'rechazado') {
+      if (!(l.observacion || '').trim()) faltas.push(`${cual}: un lote rechazado necesita observación escrita.`);
+      if (!recepcion.fotos.some((f) => f.lote_id === l.id)) faltas.push(`${cual}: un lote rechazado necesita foto del defecto.`);
+    }
+  }
+  return faltas;
+}
+
+const hayRechazo = (recepcion) => recepcion.lotes.some((l) => l.resultado === 'rechazado');
+
+// La recepción tiene que estar abierta para modificarse. Devuelve null y
+// contesta el error si no lo está, igual que hace exigir() con los permisos.
+function recepcionAbierta(res, id) {
+  const recepcion = db.prepare('SELECT * FROM recepciones WHERE id = ?').get(id);
+  if (!recepcion) { json(res, 404, { error: 'Recepción no encontrada' }); return null; }
+  if (recepcion.estado === 'cerrado') { json(res, 409, { error: 'Esta recepción ya fue cerrada.' }); return null; }
+  return recepcion;
+}
+
+ruta('GET', '/api/calidad/catalogos', (req, res) => {
+  if (!exigir(req, res, 'mod_calidad')) return;
+  const lista = (tipo) => db
+    .prepare('SELECT valor FROM catalogo_calidad WHERE tipo = ? AND activo = 1 ORDER BY orden, valor')
+    .all(tipo).map((f) => f.valor);
+
+  json(res, 200, {
+    materiales: db.prepare(`
+      SELECT id, modelo, color_impresion, marca_termino, tipo_centro, gap,
+             cant_x_rollo, colores, diam_referencia, centro_referencia
+      FROM materiales WHERE activo = 1 ORDER BY orden, modelo
+    `).all(),
+    proveedores: lista('proveedor'),
+    fondos: lista('fondo'),
+    medidas_centro: MEDIDAS_CENTRO,
+    disposiciones: DISPOSICIONES,
+  });
+});
+
+ruta('GET', '/api/calidad/recepciones', (req, res) => {
+  if (!exigir(req, res, 'mod_calidad')) return;
+  json(res, 200, {
+    recepciones: db.prepare(`
+      SELECT r.id, r.remision, r.proveedor, r.fecha_llegada, r.estado, r.creado_en,
+             u.nombre AS capturo,
+             (SELECT COUNT(*) FROM lotes l WHERE l.recepcion_id = r.id) AS lotes,
+             (SELECT COUNT(*) FROM lotes l WHERE l.recepcion_id = r.id AND l.resultado = 'rechazado') AS rechazados
+      FROM recepciones r
+      JOIN usuarios u ON u.id = r.usuario_id
+      ORDER BY r.estado = 'cerrado', r.fecha_llegada DESC, r.id DESC
+      LIMIT 60
+    `).all(),
+    // Cuántos rechazos siguen sin resolverse. Va aquí para que el aviso aparezca
+    // en la portada del módulo sin pedir la lista completa.
+    pendientes: db.prepare(`
+      SELECT COUNT(*) AS n FROM lotes l
+      JOIN recepciones r ON r.id = l.recepcion_id
+      WHERE l.resultado = 'rechazado' AND r.estado = 'cerrado' AND l.confirmado_en IS NULL
+    `).get().n,
+  });
+});
+
+ruta('POST', '/api/calidad/recepciones', (req, res, _p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_capturar');
+  if (!usuario) return;
+
+  const remision = String(cuerpo.remision || '').trim();
+  const proveedor = String(cuerpo.proveedor || '').trim();
+  const fecha = String(cuerpo.fecha_llegada || '').trim();
+  if (!remision || !proveedor || !fecha) return json(res, 400, { error: 'Falta remisión, proveedor o fecha de llegada.' });
+
+  try {
+    const { lastInsertRowid } = db.prepare(`
+      INSERT INTO recepciones (remision, proveedor, fecha_llegada, usuario_id, creado_en)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(remision, proveedor, fecha, usuario.id, new Date().toISOString());
+    json(res, 200, { id: Number(lastInsertRowid) });
+  } catch {
+    // El UNIQUE de (proveedor, remisión) evita capturar dos veces el mismo
+    // camión, que en papel pasaba cuando alguien retomaba una hoja a medias.
+    const previa = db.prepare('SELECT id FROM recepciones WHERE proveedor = ? AND remision = ?').get(proveedor, remision);
+    json(res, 409, { error: `Ya existe una recepción con la remisión ${remision} de ${proveedor}.`, id: previa && previa.id });
+  }
+});
+
+ruta('GET', '/api/calidad/recepciones/(\\d+)', (req, res, p) => {
+  if (!exigir(req, res, 'mod_calidad')) return;
+  const recepcion = recepcionCompleta(Number(p[1]));
+  if (!recepcion) return json(res, 404, { error: 'Recepción no encontrada' });
+  json(res, 200, { recepcion, faltantes: faltantesDeRecepcion(recepcion), exige_autorizacion: hayRechazo(recepcion) });
+});
+
+ruta('PUT', '/api/calidad/recepciones/(\\d+)', (req, res, p, cuerpo) => {
+  if (!exigir(req, res, 'calidad_capturar')) return;
+  const recepcion = recepcionAbierta(res, Number(p[1]));
+  if (!recepcion) return;
+
+  db.prepare('UPDATE recepciones SET remision = ?, proveedor = ?, fecha_llegada = ?, notas = ? WHERE id = ?').run(
+    String(cuerpo.remision ?? recepcion.remision).trim(),
+    String(cuerpo.proveedor ?? recepcion.proveedor).trim(),
+    String(cuerpo.fecha_llegada ?? recepcion.fecha_llegada).trim(),
+    cuerpo.notas ?? recepcion.notas,
+    recepcion.id
+  );
+  json(res, 200, { ok: true });
+});
+
+ruta('POST', '/api/calidad/recepciones/(\\d+)/lotes', (req, res, p, cuerpo) => {
+  if (!exigir(req, res, 'calidad_capturar')) return;
+  const recepcion = recepcionAbierta(res, Number(p[1]));
+  if (!recepcion) return;
+
+  const material = db.prepare('SELECT id FROM materiales WHERE id = ? AND activo = 1').get(Number(cuerpo.material_id));
+  if (!material) return json(res, 400, { error: 'Ese modelo no está en el catálogo.' });
+
+  const orden = db.prepare('SELECT COALESCE(MAX(orden), -1) AS n FROM lotes WHERE recepcion_id = ?').get(recepcion.id).n + 1;
+  const { lastInsertRowid } = db.prepare(
+    'INSERT INTO lotes (recepcion_id, material_id, fondo, orden) VALUES (?, ?, ?, ?)'
+  ).run(recepcion.id, material.id, cuerpo.fondo || null, orden);
+  json(res, 200, { id: Number(lastInsertRowid) });
+});
+
+// Campos que la tablet puede escribir en un lote. Fuera de esta lista no entra
+// nada: el total y la muestra los calcula el servidor, y la disposición de un
+// rechazo tiene su propia ruta con su propio permiso.
+const CAMPOS_LOTE = ['fondo', 'diametro', 'medida_centro', 'nitida', 'resultado', 'observacion'];
+const CANTIDADES_LOTE = ['cant_cajas', 'rollos_x_caja', 'cant_rollos'];
+
+ruta('PUT', '/api/calidad/lotes/(\\d+)', (req, res, p, cuerpo) => {
+  if (!exigir(req, res, 'calidad_capturar')) return;
+
+  const lote = db.prepare('SELECT l.*, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
+  if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
+  if (lote.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+
+  if (cuerpo.medida_centro && !MEDIDAS_CENTRO.includes(cuerpo.medida_centro)) {
+    return json(res, 400, { error: 'Medida de centro desconocida' });
+  }
+  if (cuerpo.resultado && !['aprobado', 'rechazado'].includes(cuerpo.resultado)) {
+    return json(res, 400, { error: 'Resultado desconocido' });
+  }
+  if (cuerpo.nitida && !['si', 'no'].includes(cuerpo.nitida)) {
+    return json(res, 400, { error: 'Respuesta desconocida' });
+  }
+
+  const valores = { ...lote };
+  for (const campo of CAMPOS_LOTE) {
+    if (campo in cuerpo) valores[campo] = cuerpo[campo] === '' ? null : cuerpo[campo];
+  }
+  for (const campo of CANTIDADES_LOTE) {
+    if (campo in cuerpo) {
+      const n = Number(cuerpo[campo]);
+      valores[campo] = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    }
+  }
+
+  // Misma cuenta que la hoja: si se anotó el total de rollos manda ese; si no,
+  // cajas por rollos por caja.
+  const total = valores.cant_rollos || (valores.cant_cajas || 0) * (valores.rollos_x_caja || 0);
+  valores.total_lote = total > 0 ? total : null;
+  valores.muestra = tamanoMuestra(total);
+
+  db.prepare(`
+    UPDATE lotes SET fondo = ?, cant_cajas = ?, rollos_x_caja = ?, cant_rollos = ?,
+                     total_lote = ?, muestra = ?, diametro = ?, medida_centro = ?,
+                     nitida = ?, resultado = ?, observacion = ?
+    WHERE id = ?
+  `).run(
+    valores.fondo, valores.cant_cajas, valores.rollos_x_caja, valores.cant_rollos,
+    valores.total_lote, valores.muestra, valores.diametro, valores.medida_centro,
+    valores.nitida, valores.resultado, valores.observacion, lote.id
+  );
+  json(res, 200, { ok: true, total_lote: valores.total_lote, muestra: valores.muestra });
+});
+
+ruta('DELETE', '/api/calidad/lotes/(\\d+)', (req, res, p) => {
+  if (!exigir(req, res, 'calidad_capturar')) return;
+  const lote = db.prepare('SELECT l.id, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
+  if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
+  if (lote.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+
+  for (const f of db.prepare('SELECT archivo FROM fotos_calidad WHERE lote_id = ?').all(lote.id)) {
+    fs.rm(path.join(FOTOS_DIR, f.archivo), { force: true }, () => {});
+  }
+  db.prepare('DELETE FROM lotes WHERE id = ?').run(lote.id);
+  json(res, 200, { ok: true });
+});
+
+ruta('POST', '/api/calidad/recepciones/(\\d+)/firma', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res);
+  if (!usuario) return;
+
+  const permisoNecesario = FIRMAS_CALIDAD[cuerpo.rol];
+  if (!permisoNecesario) return json(res, 400, { error: 'Tipo de firma desconocido' });
+  if (!puede(usuario, permisoNecesario)) {
+    return json(res, 403, {
+      error: cuerpo.rol === 'autorizacion'
+        ? 'Solo un Team Leader o el Administrador puede levantar la firma de autorización.'
+        : 'Tu perfil no puede firmar aquí.',
+    });
+  }
+  if (!recepcionAbierta(res, Number(p[1]))) return;
+  if (!cuerpo.imagen || !String(cuerpo.imagen).startsWith('data:image/')) {
+    return json(res, 400, { error: 'Firma inválida' });
+  }
+
+  db.prepare(`
+    INSERT INTO firmas_calidad (recepcion_id, rol, usuario_id, nombre, imagen, firmado_en)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (recepcion_id, rol)
+    DO UPDATE SET usuario_id = excluded.usuario_id, nombre = excluded.nombre,
+                  imagen = excluded.imagen, firmado_en = excluded.firmado_en
+  `).run(Number(p[1]), cuerpo.rol, usuario.id, cuerpo.nombre || usuario.nombre, cuerpo.imagen, new Date().toISOString());
+  json(res, 200, { ok: true });
+});
+
+ruta('POST', '/api/calidad/lotes/(\\d+)/fotos', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_capturar');
+  if (!usuario) return;
+
+  const lote = db.prepare('SELECT l.id, l.recepcion_id, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
+  if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
+  if (lote.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+
+  const guardado = guardarArchivoSubido(cuerpo.imagen);
+  if (guardado.error) return json(res, guardado.codigo, { error: guardado.error });
+
+  const { lastInsertRowid } = db.prepare(`
+    INSERT INTO fotos_calidad (recepcion_id, lote_id, archivo, bytes, subida_por, subida_en)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(lote.recepcion_id, lote.id, guardado.archivo, guardado.bytes, usuario.id, new Date().toISOString());
+
+  json(res, 200, { id: Number(lastInsertRowid), archivo: guardado.archivo, lote_id: lote.id, bytes: guardado.bytes });
+});
+
+ruta('DELETE', '/api/calidad/fotos/(\\d+)', (req, res, p) => {
+  if (!exigir(req, res, 'calidad_capturar')) return;
+  const foto = db.prepare(`
+    SELECT f.id, f.archivo, r.estado FROM fotos_calidad f
+    JOIN recepciones r ON r.id = f.recepcion_id WHERE f.id = ?
+  `).get(Number(p[1]));
+  if (!foto) return json(res, 404, { error: 'Foto no encontrada' });
+  if (foto.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+
+  db.prepare('DELETE FROM fotos_calidad WHERE id = ?').run(foto.id);
+  fs.rm(path.join(FOTOS_DIR, foto.archivo), { force: true }, () => {});
+  json(res, 200, { ok: true });
+});
+
+ruta('POST', '/api/calidad/recepciones/(\\d+)/cerrar', (req, res, p) => {
+  const usuario = exigir(req, res, 'calidad_capturar');
+  if (!usuario) return;
+  const id = Number(p[1]);
+
+  const recepcion = recepcionCompleta(id);
+  if (!recepcion) return json(res, 404, { error: 'Recepción no encontrada' });
+  if (recepcion.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+
+  const faltas = faltantesDeRecepcion(recepcion);
+  if (faltas.length) return json(res, 400, { error: faltas.join(' ') });
+
+  const firmas = recepcion.firmas.map((f) => f.rol);
+  if (!firmas.includes('calidad')) return json(res, 400, { error: 'Falta la firma de quien hizo el muestreo.' });
+
+  // La firma de autorización se exige solo cuando hay algún lote rechazado. Un
+  // camión que llegó bien no tiene por qué esperar a que haya un Team Leader
+  // disponible; uno con material defectuoso, sí: ahí empieza una reclamación.
+  if (hayRechazo(recepcion) && !firmas.includes('autorizacion')) {
+    return json(res, 400, { error: 'Hay lotes rechazados: falta la firma de autorización del Team Leader.' });
+  }
+
+  db.prepare("UPDATE recepciones SET estado = 'cerrado', cerrado_en = ?, cerrado_por = ? WHERE id = ?")
+    .run(new Date().toISOString(), usuario.id, id);
+  json(res, 200, { ok: true, estado: 'cerrado' });
+});
+
+// --- lotes rechazados: qué se hizo con ellos ---
+
+ruta('GET', '/api/calidad/pendientes', (req, res) => {
+  if (!exigir(req, res, 'mod_calidad')) return;
+  const filas = db.prepare(`
+    SELECT l.id, l.fondo, l.total_lote, l.muestra, l.observacion,
+           l.disposicion, l.disposicion_nota, l.dispuesto_en, l.confirmado_en,
+           m.modelo, r.id AS recepcion_id, r.remision, r.proveedor, r.fecha_llegada,
+           d.nombre AS dispuso, c.nombre AS confirmo
+    FROM lotes l
+    JOIN recepciones r ON r.id = l.recepcion_id
+    JOIN materiales m ON m.id = l.material_id
+    LEFT JOIN usuarios d ON d.id = l.dispuesto_por
+    LEFT JOIN usuarios c ON c.id = l.confirmado_por
+    WHERE l.resultado = 'rechazado' AND r.estado = 'cerrado'
+    ORDER BY l.confirmado_en IS NOT NULL, r.fecha_llegada DESC, l.id DESC
+    LIMIT 200
+  `).all().map((f) => ({
+    ...f,
+    etiqueta_disposicion: f.disposicion ? ETIQUETA_DISPOSICION[f.disposicion] : null,
+    fotos: db.prepare('SELECT id, archivo FROM fotos_calidad WHERE lote_id = ?').all(f.id),
+  }));
+
+  json(res, 200, {
+    disposiciones: DISPOSICIONES,
+    sin_resolver: filas.filter((f) => !f.disposicion),
+    por_confirmar: filas.filter((f) => f.disposicion && !f.confirmado_en),
+    resueltos: filas.filter((f) => f.confirmado_en),
+  });
+});
+
+ruta('POST', '/api/calidad/lotes/(\\d+)/disposicion', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_resolver');
+  if (!usuario) return;
+
+  const lote = db.prepare('SELECT l.*, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
+  if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
+  if (lote.resultado !== 'rechazado') return json(res, 400, { error: 'Ese lote no fue rechazado.' });
+  if (lote.estado !== 'cerrado') return json(res, 409, { error: 'La recepción todavía está abierta.' });
+  if (lote.confirmado_en) return json(res, 409, { error: 'Ese lote ya se cerró; su disposición no se cambia.' });
+  if (!ETIQUETA_DISPOSICION[cuerpo.disposicion]) return json(res, 400, { error: 'Disposición desconocida' });
+
+  db.prepare(`
+    UPDATE lotes SET disposicion = ?, disposicion_nota = ?, dispuesto_por = ?, dispuesto_en = ?
+    WHERE id = ?
+  `).run(cuerpo.disposicion, (cuerpo.nota || '').trim() || null, usuario.id, new Date().toISOString(), lote.id);
+  json(res, 200, { ok: true });
+});
+
+ruta('POST', '/api/calidad/lotes/(\\d+)/confirmar', (req, res, p) => {
+  const usuario = exigir(req, res, 'calidad_autorizar');
+  if (!usuario) return;
+
+  const lote = db.prepare('SELECT * FROM lotes WHERE id = ?').get(Number(p[1]));
+  if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
+  if (!lote.disposicion) return json(res, 400, { error: 'Todavía no se ha decidido qué hacer con ese lote.' });
+  if (lote.confirmado_en) return json(res, 409, { error: 'Ese lote ya está cerrado.' });
+
+  // Quien decide no confirma su propia decisión. Es lo que convierte esto en un
+  // acuerdo de dos y no en el trámite de una sola persona.
+  if (lote.dispuesto_por === usuario.id) {
+    return json(res, 403, { error: 'La disposición la confirma otra persona, no quien la registró.' });
+  }
+
+  db.prepare('UPDATE lotes SET confirmado_por = ?, confirmado_en = ? WHERE id = ?')
+    .run(usuario.id, new Date().toISOString(), lote.id);
+  json(res, 200, { ok: true });
+});
+
+// --- reportes de calidad ---
+
+ruta('GET', '/api/calidad/reportes', (req, res) => {
+  if (!exigir(req, res, 'calidad_reportes')) return;
+  const desde = new URL(req.url, 'http://x').searchParams.get('desde') || '0000-01-01';
+
+  const lotes = db.prepare(`
+    SELECT l.id, l.fondo, l.total_lote, l.muestra, l.diametro, l.medida_centro,
+           l.nitida, l.resultado, l.observacion, l.disposicion, l.confirmado_en,
+           m.modelo, m.diam_referencia, m.centro_referencia,
+           r.id AS recepcion_id, r.remision, r.proveedor, r.fecha_llegada, r.estado
+    FROM lotes l
+    JOIN recepciones r ON r.id = l.recepcion_id
+    JOIN materiales m ON m.id = l.material_id
+    WHERE r.fecha_llegada >= ?
+    ORDER BY r.fecha_llegada DESC, l.id DESC
+    LIMIT 400
+  `).all(desde);
+
+  const revisados = lotes.filter((l) => l.resultado);
+  const rechazados = revisados.filter((l) => l.resultado === 'rechazado');
+
+  // Índice de rechazo por proveedor: la pregunta que la hoja de papel no podía
+  // contestar sin volver a leer todas las hojas del archivero.
+  const porProveedor = {};
+  for (const l of revisados) {
+    const p = (porProveedor[l.proveedor] ||= { proveedor: l.proveedor, lotes: 0, rechazados: 0, rollos: 0 });
+    p.lotes++;
+    p.rollos += l.total_lote || 0;
+    if (l.resultado === 'rechazado') p.rechazados++;
+  }
+
+  json(res, 200, {
+    lotes,
+    resumen: {
+      lotes: revisados.length,
+      rechazados: rechazados.length,
+      rollos: revisados.reduce((n, l) => n + (l.total_lote || 0), 0),
+      revisados: revisados.reduce((n, l) => n + (l.muestra || 0), 0),
+      sin_resolver: rechazados.filter((l) => !l.confirmado_en).length,
+    },
+    proveedores: Object.values(porProveedor).sort((a, b) => b.rechazados - a.rechazados || b.lotes - a.lotes),
+    etiquetas_disposicion: ETIQUETA_DISPOSICION,
+  });
+});
+
+ruta('GET', '/api/calidad/exportar.csv', (req, res) => {
+  if (!exigir(req, res, 'calidad_reportes')) return;
+
+  const filas = db.prepare(`
+    SELECT r.fecha_llegada, r.remision, r.proveedor, r.estado, m.modelo, l.fondo,
+           l.cant_cajas, l.rollos_x_caja, l.total_lote, l.muestra, l.diametro,
+           l.medida_centro, l.nitida, l.resultado, l.observacion, l.disposicion,
+           l.disposicion_nota, l.confirmado_en, u.nombre AS capturo
+    FROM lotes l
+    JOIN recepciones r ON r.id = l.recepcion_id
+    JOIN materiales m ON m.id = l.material_id
+    JOIN usuarios u ON u.id = r.usuario_id
+    ORDER BY r.fecha_llegada DESC, l.id
+  `).all();
+
+  const encabezados = [
+    'Fecha de llegada', 'Remisión', 'Proveedor', 'Estado', 'Modelo', 'Fondo',
+    'Cajas', 'Rollos por caja', 'Total en lote', 'Cuántos revisar', 'Diámetro',
+    'Medida centro', '¿Nítida?', 'Resultado', 'Observación', 'Disposición',
+    'Nota de disposición', 'Confirmado', 'Capturó',
+  ];
+  const celda = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [encabezados.map(celda).join(',')]
+    .concat(filas.map((f) => [
+      f.fecha_llegada, f.remision, f.proveedor, f.estado, f.modelo, f.fondo,
+      f.cant_cajas, f.rollos_x_caja, f.total_lote, f.muestra, f.diametro,
+      f.medida_centro, f.nitida, f.resultado, f.observacion,
+      f.disposicion ? ETIQUETA_DISPOSICION[f.disposicion] : '',
+      f.disposicion_nota, f.confirmado_en, f.capturo,
+    ].map(celda).join(',')))
+    .join('\r\n');
+
+  // El BOM es lo que hace que Excel abra los acentos bien al dar doble clic.
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="calidad-muestreo.csv"',
+  });
+  res.end('﻿' + csv);
+});
+
 // --- administración de catálogos (usuarios y unidades) ---
 
 ruta('GET', '/api/admin/catalogos', (req, res) => {
@@ -1247,7 +1782,7 @@ ruta('POST', '/api/admin/usuarios', (req, res, _p, cuerpo) => {
   const pin = String(cuerpo.pin || '').trim();
   if (exigePin(cuerpo.rol, extra) && !PIN_VALIDO.test(pin)) {
     return json(res, 400, {
-      error: 'Quien ve Reportes, Comparativa o Configuración necesita un PIN de 4 a 12 caracteres (letras o números).',
+      error: 'Quien ve Reportes, Comparativa, Configuración o los reportes de Calidad necesita un PIN de 4 a 12 caracteres (letras o números).',
     });
   }
 
@@ -1315,7 +1850,7 @@ ruta('PUT', '/api/admin/usuarios/(\\d+)', (req, res, p, cuerpo) => {
 
   if (exigePin(rol, extra) && !pin) {
     return json(res, 400, {
-      error: 'Quien ve Reportes, Comparativa o Configuración necesita PIN. Captura uno para poder guardar.',
+      error: 'Quien ve Reportes, Comparativa, Configuración o los reportes de Calidad necesita PIN. Captura uno para poder guardar.',
     });
   }
 
@@ -1399,7 +1934,7 @@ ruta('PUT', '/api/admin/permisos', (req, res, _p, cuerpo) => {
     }
     if (PERMISOS_SENSIBLES.some((k) => efectivos[k]) && !persona.pin) {
       return json(res, 400, {
-        error: `${persona.nombre} necesita un PIN antes de darle Reportes, Comparativa o Configuración.`,
+        error: `${persona.nombre} necesita un PIN antes de darle Reportes, Comparativa, Configuración o los reportes de Calidad.`,
       });
     }
     if (persona.rol === 'admin' && persona.activo && !efectivos.configuracion) {
@@ -1496,6 +2031,89 @@ ruta('PUT', '/api/admin/activos/(\\d+)', (req, res, p, cuerpo) => {
   if (!usuario) return;
   db.prepare('UPDATE activos SET nombre = ?, atributos = ?, activo = ? WHERE id = ?')
     .run(cuerpo.nombre, JSON.stringify(cuerpo.atributos || {}), cuerpo.activo ? 1 : 0, Number(p[1]));
+  json(res, 200, { ok: true });
+});
+
+
+// --- catálogo de Calidad: materiales, proveedores y colores de fondo ---
+
+// Es lo que en el Excel era la hoja MATERIALES, protegida con contraseña de
+// administrador. Aquí vive en la misma pestaña que las unidades y se edita sin
+// riesgo de pisar una fórmula.
+
+const CAMPOS_MATERIAL = [
+  'color_impresion', 'marca_termino', 'tipo_centro', 'gap',
+  'cant_x_rollo', 'colores', 'diam_referencia', 'centro_referencia',
+];
+
+const TIPOS_CATALOGO = { proveedor: 'proveedor', fondo: 'fondo' };
+
+ruta('GET', '/api/admin/materiales', (req, res) => {
+  if (!exigir(req, res, 'configuracion')) return;
+  json(res, 200, {
+    materiales: db.prepare('SELECT * FROM materiales ORDER BY orden, modelo').all(),
+    proveedores: db.prepare("SELECT id, valor, activo FROM catalogo_calidad WHERE tipo = 'proveedor' ORDER BY orden, valor").all(),
+    fondos: db.prepare("SELECT id, valor, activo FROM catalogo_calidad WHERE tipo = 'fondo' ORDER BY orden, valor").all(),
+  });
+});
+
+ruta('POST', '/api/admin/materiales', (req, res, _p, cuerpo) => {
+  if (!exigir(req, res, 'configuracion')) return;
+  const modelo = String(cuerpo.modelo || '').trim();
+  if (!modelo) return json(res, 400, { error: 'Falta el modelo' });
+
+  const orden = db.prepare('SELECT COALESCE(MAX(orden), -1) AS n FROM materiales').get().n + 1;
+  try {
+    db.prepare(`
+      INSERT INTO materiales (modelo, color_impresion, marca_termino, tipo_centro, gap,
+                              cant_x_rollo, colores, diam_referencia, centro_referencia, orden)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(modelo, ...CAMPOS_MATERIAL.map((c) => String(cuerpo[c] || '').trim()), orden);
+  } catch {
+    return json(res, 409, { error: 'Ya existe un material con ese modelo' });
+  }
+  json(res, 200, { ok: true });
+});
+
+ruta('PUT', '/api/admin/materiales/(\\d+)', (req, res, p, cuerpo) => {
+  if (!exigir(req, res, 'configuracion')) return;
+  const material = db.prepare('SELECT * FROM materiales WHERE id = ?').get(Number(p[1]));
+  if (!material) return json(res, 404, { error: 'Material no encontrado' });
+
+  // El modelo no se renombra desde aquí: los lotes ya capturados apuntan a este
+  // renglón, y cambiarle el nombre reescribiría la historia de esos muestreos.
+  // Para retirar un modelo se desmarca 'activo' y deja de aparecer en la tablet.
+  db.prepare(`
+    UPDATE materiales SET color_impresion = ?, marca_termino = ?, tipo_centro = ?,
+                          gap = ?, cant_x_rollo = ?, colores = ?,
+                          diam_referencia = ?, centro_referencia = ?, activo = ?
+    WHERE id = ?
+  `).run(
+    ...CAMPOS_MATERIAL.map((c) => (c in cuerpo ? String(cuerpo[c] || '').trim() : material[c])),
+    cuerpo.activo ? 1 : 0,
+    material.id
+  );
+  json(res, 200, { ok: true });
+});
+
+ruta('POST', '/api/admin/catalogo-calidad', (req, res, _p, cuerpo) => {
+  if (!exigir(req, res, 'configuracion')) return;
+  const tipo = TIPOS_CATALOGO[cuerpo.tipo];
+  const valor = String(cuerpo.valor || '').trim();
+  if (!tipo || !valor) return json(res, 400, { error: 'Falta el tipo o el valor' });
+
+  const orden = db.prepare('SELECT COALESCE(MAX(orden), -1) AS n FROM catalogo_calidad WHERE tipo = ?').get(tipo).n + 1;
+  try {
+    db.prepare('INSERT INTO catalogo_calidad (tipo, valor, orden) VALUES (?, ?, ?)').run(tipo, valor, orden);
+  } catch {
+    return json(res, 409, { error: `«${valor}» ya está en la lista` });
+  }
+  json(res, 200, { ok: true });
+});
+
+ruta('PUT', '/api/admin/catalogo-calidad/(\\d+)', (req, res, p, cuerpo) => {
+  if (!exigir(req, res, 'configuracion')) return;
+  db.prepare('UPDATE catalogo_calidad SET activo = ? WHERE id = ?').run(cuerpo.activo ? 1 : 0, Number(p[1]));
   json(res, 200, { ok: true });
 });
 

@@ -16,6 +16,8 @@ const estado = {
   plantilla: null,
   respuestas: new Map(), // "itemId|columna" -> { valor, observacion }
   fotos: new Map(),      // "itemId|columna" -> [ { id, archivo } ]
+  recepcion: null,       // recepción de Calidad abierta, con sus lotes
+  catalogos_calidad: null, // materiales, proveedores y colores; se piden una vez
 };
 
 const esc = (v) =>
@@ -387,11 +389,18 @@ function pintarNavegacion() {
       ? '<button class="btn" data-ir="#/reportes">Reportes</button>' : ''}
     ${estado.usuario && permiso('comparativa') && enModuloChecklists()
       ? '<button class="btn" data-ir="#/comparativa">Comparativa</button>' : ''}
+    ${estado.usuario && enModuloCalidad()
+      ? '<button class="btn" data-ir="#/calidad/pendientes">Rechazados</button>' : ''}
+    ${estado.usuario && permiso('calidad_reportes') && enModuloCalidad()
+      ? '<button class="btn" data-ir="#/calidad/reportes">Reportes</button>' : ''}
     ${estado.usuario ? '<button class="btn" data-salir>Salir</button>' : ''}`;
 }
 
 const RUTAS_CHECKLISTS = /^#\/(checklists|llenar|envio|envios|reportes|comparativa|detalle)/;
 const enModuloChecklists = () => RUTAS_CHECKLISTS.test(location.hash || '');
+
+const RUTAS_CALIDAD = /^#\/(calidad|recepcion)/;
+const enModuloCalidad = () => RUTAS_CALIDAD.test(location.hash || '');
 
 navegacion.addEventListener('click', (e) => {
   const ir = e.target.closest('[data-ir]');
@@ -438,7 +447,7 @@ async function vistaMenu() {
   });
 }
 
-const DESTINO_MODULO = { checklists: '#/checklists', configuracion: '#/config' };
+const DESTINO_MODULO = { checklists: '#/checklists', calidad: '#/calidad', configuracion: '#/config' };
 
 // Cuánto vale una identificación reciente antes de volver a pedirla en las
 // secciones marcadas como sensibles.
@@ -1168,7 +1177,13 @@ function guardarNotas(texto) {
 // varias veces. En modo consulta los controles van deshabilitados, así que no
 // disparan eventos.
 function conectarCaptura() {
+  // Calidad reusa las clases de estilo de la captura de checklists pero tiene su
+  // propia lógica y sus propias rutas. Sin esta frontera, un toque en un lote
+  // mandaría además una respuesta al checklist que estuviera abierto.
+  const enCalidad = (e) => !!e.target.closest('.captura-calidad');
+
   vista.addEventListener('click', (e) => {
+    if (enCalidad(e)) return;
     const opcion = e.target.closest('.opcion');
     if (opcion) {
       const fila = opcion.closest('.item');
@@ -1250,6 +1265,7 @@ function conectarCaptura() {
   });
 
   vista.addEventListener('input', (e) => {
+    if (enCalidad(e)) return;
     const obs = e.target.closest('.item .obs');
     if (obs) {
       const fila = obs.closest('.item');
@@ -1437,7 +1453,9 @@ function conectarFirmas() {
       if (!hayTrazo) return mostrarMensaje('Dibuja la firma antes de guardarla.', 'error');
       if (!nombre) return mostrarMensaje('Escribe el nombre de quien firma.', 'error');
       try {
-        await api('POST', `/api/llenados/${estado.llenado.id}/firma`, {
+        // Calidad firma sus recepciones con el mismo lienzo; lo único que
+        // cambia es a dónde se manda, y eso viaja en el propio recuadro.
+        await api('POST', caja.dataset.url || `/api/llenados/${estado.llenado.id}/firma`, {
           rol: caja.dataset.firma,
           nombre,
           imagen: lienzo.toDataURL('image/png'),
@@ -1513,15 +1531,9 @@ async function vistaReportes() {
       <a class="btn" id="descargar" href="#">Descargar todo en Excel (CSV)</a>
     </div>`;
 
-  // La descarga necesita el token; fetch + blob en lugar de un enlace directo.
-  document.getElementById('descargar').addEventListener('click', async (e) => {
+  document.getElementById('descargar').addEventListener('click', (e) => {
     e.preventDefault();
-    const res = await fetch('/api/exportar.csv', { headers: { Authorization: `Bearer ${estado.token}` } });
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = Object.assign(document.createElement('a'), { href: url, download: `checklists-${new Date().toISOString().slice(0, 10)}.csv` });
-    a.click();
-    URL.revokeObjectURL(url);
+    descargarCSV('/api/exportar.csv', `checklists-${new Date().toISOString().slice(0, 10)}.csv`);
   });
 
   vista.querySelectorAll('[data-ver]').forEach((b) => {
@@ -1758,6 +1770,7 @@ const PESTANAS_CONFIG = [
   { clave: 'permisos', etiqueta: 'Permisos', pintar: configPermisos },
   { clave: 'unidades', etiqueta: 'Unidades', pintar: configUnidades },
   { clave: 'checklists', etiqueta: 'Checklists', pintar: configChecklists },
+  { clave: 'materiales', etiqueta: 'Materiales', pintar: configMateriales },
 ];
 
 // Matriz persona × permiso. Cada casilla es el permiso efectivo: si difiere de
@@ -2131,6 +2144,143 @@ async function configChecklists(destino) {
 
 // Editor de una persona. Se abre encima de la tabla para que en tablet no haya
 // que pelear con campos diminutos dentro de una celda.
+
+// --- pestaña: materiales (catálogo de Calidad) ---
+
+// Es la hoja MATERIALES del Excel, que estaba protegida con contraseña. Aquí se
+// edita sin riesgo: las cuentas del muestreo no viven en estas celdas.
+
+const COLUMNAS_MATERIAL = [
+  ['color_impresion', 'Color impr.'],
+  ['marca_termino', 'Marca término'],
+  ['tipo_centro', 'Tipo centro'],
+  ['gap', 'GAP'],
+  ['cant_x_rollo', 'Etiquetas/rollo'],
+  ['diam_referencia', 'Diám. ref.'],
+  ['centro_referencia', 'Centro ref.'],
+];
+
+async function configMateriales(destino) {
+  const { materiales, proveedores, fondos } = await api('GET', '/api/admin/materiales');
+
+  const listaSimple = (titulo, tipo, filas, ayuda) => `
+    <div class="panel">
+      <h2>${titulo} <span class="etiqueta azul">${filas.filter((f) => f.activo).length}</span></h2>
+      <p class="explica">${ayuda}</p>
+      <div class="selector-semanas">
+        ${filas.map((f) => `
+          <label class="chip">
+            <input type="checkbox" data-catalogo="${f.id}" ${f.activo ? 'checked' : ''}>
+            ${esc(f.valor)}
+          </label>`).join('')}
+      </div>
+      <div class="bloque-form">
+        <div class="campos-linea">
+          <div class="campo" style="flex:1"><label for="nuevo-${tipo}">Agregar</label>
+            <input id="nuevo-${tipo}" placeholder="Nombre nuevo"></div>
+          <button class="btn" data-agregar-catalogo="${tipo}">Agregar</button>
+        </div>
+      </div>
+    </div>`;
+
+  destino.innerHTML = `
+    <div class="panel">
+      <h2>${materiales.filter((m) => m.activo).length} material(es) en uso</h2>
+      <p class="explica">
+        Lo que se llena solo en la hoja de muestreo sale de aquí. Desmarcar «En uso»
+        retira un modelo de la tablet sin borrar los muestreos que ya lo mencionan.
+      </p>
+      <div class="desliza"><table class="captura">
+        <thead><tr>
+          <th class="fila-titulo">Modelo</th>
+          ${COLUMNAS_MATERIAL.map(([, e]) => `<th>${e}</th>`).join('')}
+          <th>En uso</th>
+        </tr></thead>
+        <tbody>${materiales.map((m) => `
+          <tr class="${m.activo ? '' : 'inactiva'}" data-material="${m.id}">
+            <th class="fila-titulo">${esc(m.modelo)}</th>
+            ${COLUMNAS_MATERIAL.map(([campo]) => `
+              <td><input data-campo-material="${campo}" value="${esc(m[campo] || '')}"></td>`).join('')}
+            <td><button class="casilla" data-uso-material="${m.id}" aria-pressed="${!!m.activo}">✓</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+
+      <div class="bloque-form">
+        <h3>Agregar un material</h3>
+        <div class="rejilla-campos">
+          <div class="campo"><label for="m-modelo">Modelo</label><input id="m-modelo" placeholder="Ej. 45X25"></div>
+          ${COLUMNAS_MATERIAL.map(([campo, etiqueta]) => `
+            <div class="campo"><label for="m-${campo}">${etiqueta}</label><input id="m-${campo}"></div>`).join('')}
+        </div>
+        <button class="btn primario" id="agregar-material">Agregar material</button>
+      </div>
+    </div>
+
+    ${listaSimple('Proveedores', 'proveedor', proveedores, 'Los que aparecen al abrir una recepción nueva.')}
+    ${listaSimple('Colores de fondo', 'fondo', fondos, 'Los que se pueden elegir al agregar un lote.')}`;
+
+  // Un cambio en la especificación se guarda al salir del campo, no en cada
+  // tecla: son datos que se corrigen de vez en cuando, no captura continua.
+  destino.querySelectorAll('[data-campo-material]').forEach((campo) => {
+    campo.addEventListener('change', async () => {
+      const fila = campo.closest('[data-material]');
+      const cuerpo = { activo: fila.querySelector('[data-uso-material]').getAttribute('aria-pressed') === 'true' };
+      fila.querySelectorAll('[data-campo-material]').forEach((c) => { cuerpo[c.dataset.campoMaterial] = c.value; });
+      try {
+        await api('PUT', `/api/admin/materiales/${fila.dataset.material}`, cuerpo);
+        mostrarMensaje('Material actualizado.', 'exito');
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+    });
+  });
+
+  destino.querySelectorAll('[data-uso-material]').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      const fila = boton.closest('[data-material]');
+      const encendido = boton.getAttribute('aria-pressed') === 'true';
+      const cuerpo = { activo: !encendido };
+      fila.querySelectorAll('[data-campo-material]').forEach((c) => { cuerpo[c.dataset.campoMaterial] = c.value; });
+      try {
+        await api('PUT', `/api/admin/materiales/${fila.dataset.material}`, cuerpo);
+        recargarConfig();
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+    });
+  });
+
+  document.getElementById('agregar-material').addEventListener('click', async () => {
+    const cuerpo = { modelo: document.getElementById('m-modelo').value.trim() };
+    for (const [campo] of COLUMNAS_MATERIAL) cuerpo[campo] = document.getElementById(`m-${campo}`).value.trim();
+    if (!cuerpo.modelo) return mostrarMensaje('Escribe el modelo.', 'error');
+    try {
+      await api('POST', '/api/admin/materiales', cuerpo);
+      recargarConfig();
+    } catch (err) { mostrarMensaje(err.message, 'error'); }
+  });
+
+  destino.querySelectorAll('[data-agregar-catalogo]').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      const tipo = boton.dataset.agregarCatalogo;
+      const campo = document.getElementById(`nuevo-${tipo}`);
+      if (!campo.value.trim()) return mostrarMensaje('Escribe el nombre.', 'error');
+      try {
+        await api('POST', '/api/admin/catalogo-calidad', { tipo, valor: campo.value.trim() });
+        recargarConfig();
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+    });
+  });
+
+  destino.querySelectorAll('[data-catalogo]').forEach((casilla) => {
+    casilla.addEventListener('change', async () => {
+      try {
+        await api('PUT', `/api/admin/catalogo-calidad/${casilla.dataset.catalogo}`, { activo: casilla.checked });
+      } catch (err) {
+        casilla.checked = !casilla.checked;
+        mostrarMensaje(err.message, 'error');
+      }
+    });
+  });
+}
+
 function editarPersona(persona, roles) {
   const tieneHistorial = persona.llenados > 0 || persona.firmas > 0;
 
@@ -2245,6 +2395,889 @@ function editarPersona(persona, roles) {
 // El menú y la pantalla de acceso son públicas: son navegación, y la tablet
 // vive dentro del almacén. Todo lo que muestra datos exige identificarse, y el
 // servidor vuelve a comprobar el permiso en cada llamada.
+// ============================================================ vista: calidad
+
+// Muestreo del material que llega de proveedor. Viene de MUESTREO_GUIADO.xlsx:
+// una recepción por remisión y un renglón por lote.
+//
+// La captura de Calidad comparte clases de estilo con la de los checklists pero
+// no su lógica, así que todo cuelga de un contenedor con clase
+// 'captura-calidad'. conectarCaptura() se sale al verlo, y aquí se conectan los
+// manejadores propios. Sin esa frontera, un toque en un lote mandaría respuestas
+// al checklist que estuviera abierto.
+
+const ETIQUETA_RECEPCION = {
+  borrador: ['ambar', 'En captura'],
+  cerrado: ['verde', 'Cerrada'],
+};
+
+// toISOString() da la fecha en UTC: a las 7 de la tarde en México ya sería el
+// día siguiente. Se corre el desfase para que el valor por omisión sea hoy.
+const hoyLocal = () => {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
+
+const fechaCorta = (iso) => (iso || '').split('-').reverse().join('/');
+
+async function catalogosCalidad() {
+  if (!estado.catalogos_calidad) estado.catalogos_calidad = await api('GET', '/api/calidad/catalogos');
+  return estado.catalogos_calidad;
+}
+
+async function vistaCalidad() {
+  encabezado('Calidad', 'Muestreo de material recibido');
+  const { recepciones, pendientes } = await api('GET', '/api/calidad/recepciones');
+
+  const abiertas = recepciones.filter((r) => r.estado === 'borrador');
+  const cerradas = recepciones.filter((r) => r.estado === 'cerrado');
+
+  const tarjeta = (r) => {
+    const [color, texto] = ETIQUETA_RECEPCION[r.estado] || ['', r.estado];
+    return `
+      <button class="tarea ${r.estado}" data-recepcion="${r.id}">
+        <span class="etiqueta ${color}">${texto}</span>
+        <b>Remisión ${esc(r.remision)}</b>
+        <span class="meta">${esc(r.proveedor)} · llegó ${fechaCorta(r.fecha_llegada)}</span>
+        <span class="meta">${r.lotes} lote(s)${r.rechazados ? ` · ${r.rechazados} rechazado(s)` : ''} · ${esc(r.capturo)}</span>
+      </button>`;
+  };
+
+  vista.innerHTML = `
+    <div class="migaja">
+      <button data-ir-menu>← Menú</button><span>/</span><span>Calidad</span>
+    </div>
+    <div id="mensajes"></div>
+
+    ${pendientes ? `
+      <button class="aviso pendientes" data-ir-pendientes>
+        <span class="cuenta">${pendientes}</span>
+        <span><b>Lote(s) rechazado(s) sin resolver.</b>
+          <small>Falta decidir qué se hace con el material.</small></span>
+        <span class="flecha" aria-hidden="true">›</span>
+      </button>` : ''}
+
+    ${permiso('calidad_capturar') ? `
+      <div class="fila-botones" style="margin-bottom:18px">
+        <button class="btn primario grande" id="nueva-recepcion">+ Nueva recepción</button>
+      </div>` : ''}
+
+    <section class="panel">
+      <h2>En captura ${abiertas.length ? `<span class="etiqueta ambar">${abiertas.length}</span>` : ''}</h2>
+      ${abiertas.length
+        ? `<div class="rejilla-tareas" style="padding:18px">${abiertas.map(tarjeta).join('')}</div>`
+        : '<div class="vacio">No hay recepciones abiertas.</div>'}
+    </section>
+
+    ${cerradas.length ? `
+      <section class="panel">
+        <h2>Cerradas <span class="etiqueta verde">${cerradas.length}</span></h2>
+        <div class="rejilla-tareas" style="padding:18px">${cerradas.map(tarjeta).join('')}</div>
+      </section>` : ''}`;
+
+  vista.querySelector('[data-ir-menu]').addEventListener('click', () => { location.hash = '#/menu'; });
+  const irPendientes = vista.querySelector('[data-ir-pendientes]');
+  if (irPendientes) irPendientes.addEventListener('click', () => { location.hash = '#/calidad/pendientes'; });
+  const nueva = document.getElementById('nueva-recepcion');
+  if (nueva) nueva.addEventListener('click', abrirNuevaRecepcion);
+  vista.querySelectorAll('[data-recepcion]').forEach((b) => {
+    b.addEventListener('click', () => { location.hash = `#/recepcion/${b.dataset.recepcion}`; });
+  });
+}
+
+// Remisión, proveedor y fecha se piden ANTES de capturar lotes: son lo que
+// identifica al camión, igual que el número de envío en Tránsito.
+async function abrirNuevaRecepcion() {
+  const { proveedores } = await catalogosCalidad();
+
+  const capa = document.createElement('div');
+  capa.className = 'modal';
+  capa.innerHTML = `
+    <div class="caja-modal" role="dialog" aria-label="Nueva recepción">
+      <h2>Nueva recepción</h2>
+      <div class="cuerpo-modal">
+        <div id="error-recepcion"></div>
+        <div class="campo">
+          <label for="r-proveedor">Proveedor</label>
+          <select id="r-proveedor">
+            <option value="">Elige uno…</option>
+            ${proveedores.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="campo">
+          <label for="r-remision"># Remisión</label>
+          <input id="r-remision" autocomplete="off" placeholder="Ej. 4821">
+        </div>
+        <div class="campo">
+          <label for="r-fecha">Fecha de llegada</label>
+          <input id="r-fecha" type="date" value="${hoyLocal()}">
+        </div>
+      </div>
+      <div class="pie-modal">
+        <button class="btn" data-cancelar>Cancelar</button>
+        <button class="btn primario" data-comenzar>Comenzar muestreo</button>
+      </div>
+    </div>`;
+  document.body.appendChild(capa);
+
+  const cerrar = () => { capa.remove(); document.removeEventListener('keydown', alPresionar); };
+  const alPresionar = (e) => { if (e.key === 'Escape') cerrar(); };
+  document.addEventListener('keydown', alPresionar);
+  capa.addEventListener('click', (e) => { if (e.target === capa) cerrar(); });
+  capa.querySelector('[data-cancelar]').addEventListener('click', cerrar);
+
+  capa.querySelector('[data-comenzar]').addEventListener('click', async () => {
+    const cuerpo = {
+      proveedor: capa.querySelector('#r-proveedor').value,
+      remision: capa.querySelector('#r-remision').value.trim(),
+      fecha_llegada: capa.querySelector('#r-fecha').value,
+    };
+    if (!cuerpo.proveedor || !cuerpo.remision || !cuerpo.fecha_llegada) {
+      capa.querySelector('#error-recepcion').innerHTML = avisoError('Falta proveedor, remisión o fecha.');
+      return;
+    }
+    try {
+      const { id } = await api('POST', '/api/calidad/recepciones', cuerpo);
+      cerrar();
+      location.hash = `#/recepcion/${id}`;
+    } catch (err) {
+      capa.querySelector('#error-recepcion').innerHTML = avisoError(err.message);
+    }
+  });
+
+  capa.querySelector('#r-proveedor').focus();
+}
+
+// --- captura de una recepción ---
+
+async function vistaRecepcion(id) {
+  const { recepcion, exige_autorizacion: exigeAutorizacion } = await api('GET', `/api/calidad/recepciones/${id}`);
+  const { materiales, fondos, medidas_centro: medidas } = await catalogosCalidad();
+
+  estado.recepcion = recepcion;
+  estado.exige_autorizacion = exigeAutorizacion;
+  const soloLectura = recepcion.estado === 'cerrado';
+
+  encabezado(`Remisión ${recepcion.remision}`, `${recepcion.proveedor} · llegó ${fechaCorta(recepcion.fecha_llegada)}`);
+
+  vista.innerHTML = `
+    <div class="migaja">
+      <button data-ir-menu>← Menú</button><span>/</span>
+      <button data-ir-calidad>Calidad</button><span>/</span><span>Remisión ${esc(recepcion.remision)}</span>
+    </div>
+    <div id="mensajes"></div>
+
+    <div class="captura-calidad">
+      ${soloLectura ? `<div class="aviso info">Recepción cerrada el
+        ${new Date(recepcion.cerrado_en).toLocaleString('es-MX')} por ${esc(recepcion.cerro || recepcion.capturo)}.
+        Ya no se modifica.</div>` : ''}
+
+      <section class="panel">
+        <h2>Lotes de esta remisión ${recepcion.lotes.length ? `<span class="etiqueta azul">${recepcion.lotes.length}</span>` : ''}</h2>
+        <div id="lista-lotes" style="padding:18px">
+          ${recepcion.lotes.length
+            ? recepcion.lotes.map((l) => pintarLote(l, recepcion.fotos, soloLectura, medidas, fondos)).join('')
+            : '<div class="vacio">Todavía no hay lotes. Agrega el primer modelo que bajó del camión.</div>'}
+        </div>
+        ${soloLectura ? '' : `
+          <div class="bloque-form">
+            <h3>Agregar un lote</h3>
+            <div class="rejilla-campos">
+              <div class="campo">
+                <label for="l-modelo">Modelo</label>
+                <select id="l-modelo">
+                  <option value="">Elige uno…</option>
+                  ${materiales.map((m) => `<option value="${m.id}">${esc(m.modelo)}</option>`).join('')}
+                </select>
+              </div>
+              <div class="campo">
+                <label for="l-fondo">Fondo (color)</label>
+                <select id="l-fondo">
+                  <option value="">Elige uno…</option>
+                  ${fondos.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <button class="btn primario" id="agregar-lote">Agregar lote</button>
+          </div>`}
+      </section>
+
+      <section class="panel">
+        <h2>Observaciones / comentarios</h2>
+        <div style="padding:18px">
+          <textarea class="obs" id="notas-recepcion" style="display:block;width:100%;min-height:90px"
+            placeholder="Lo que valga la pena dejar anotado de esta remisión"
+            ${soloLectura ? 'readonly' : ''}>${esc(recepcion.notas || '')}</textarea>
+          <p class="explica" style="padding:10px 0 0">
+            Recuerda generar las pruebas de impresión y adjuntarlas como evidencia en su lote.
+          </p>
+        </div>
+      </section>
+
+      <div id="firmas-calidad">${pintarFirmasCalidad(recepcion, soloLectura, exigeAutorizacion)}</div>
+    </div>
+
+    ${soloLectura ? '' : `
+      <div class="pie">
+        <span class="resumen" id="resumen-calidad"></span>
+        <span class="guardado" id="guardado-calidad">Guardado</span>
+        <button class="btn primario grande" style="width:auto" id="cerrar-recepcion">Cerrar recepción</button>
+      </div>`}`;
+
+  vista.querySelector('[data-ir-menu]').addEventListener('click', () => { location.hash = '#/menu'; });
+  vista.querySelector('[data-ir-calidad]').addEventListener('click', () => { location.hash = '#/calidad'; });
+  cargarImagenesPendientes();
+  conectarFirmas();
+  if (!soloLectura) conectarCalidad();
+  actualizarResumenCalidad();
+}
+
+// Un lote: lo que se escribe, lo que el sistema contesta, la especificación
+// contra la que se compara y el veredicto. Es el renglón de la hoja de papel
+// abierto en vertical para que quepa en una tablet.
+function pintarLote(lote, fotos, soloLectura, medidas, fondos) {
+  const spec = [
+    ['Color de impresión', lote.color_impresion],
+    ['Marca de término', lote.marca_termino],
+    ['Tipo de centro', lote.tipo_centro],
+    ['GAP', lote.gap],
+    ['Etiquetas por rollo', lote.cant_x_rollo],
+    ['Diámetro de referencia', lote.diam_referencia],
+    ['Centro de referencia', lote.centro_referencia],
+  ].filter(([, v]) => v);
+
+  const marcado = (campo, valor) => (lote[campo] === valor ? 'true' : 'false');
+
+  return `
+    <article class="lote ${lote.resultado || ''}" data-lote="${lote.id}">
+      <header>
+        <b>${esc(lote.modelo)}</b>
+        ${lote.fondo ? `<span class="etiqueta">${esc(lote.fondo)}</span>` : ''}
+        ${lote.resultado
+          ? `<span class="etiqueta ${lote.resultado === 'aprobado' ? 'verde' : 'roja'}">
+               ${lote.resultado === 'aprobado' ? 'Aprobado' : 'Rechazado'}</span>`
+          : '<span class="etiqueta ambar">Sin revisar</span>'}
+        ${soloLectura ? '' : `<button class="quitar" data-quitar-lote="${lote.id}" title="Quitar lote">×</button>`}
+      </header>
+
+      <div class="cuerpo">
+        <div>
+          <p class="rotulo-bloque">1 · ¿Cuánto llegó?</p>
+          <div class="campos-linea">
+            <div class="campo"><label>Cajas</label>
+              <input inputmode="numeric" data-campo="cant_cajas" value="${lote.cant_cajas ?? ''}" ${soloLectura ? 'readonly' : ''}></div>
+            <div class="campo"><label>Rollos por caja</label>
+              <input inputmode="numeric" data-campo="rollos_x_caja" value="${lote.rollos_x_caja ?? ''}" ${soloLectura ? 'readonly' : ''}></div>
+            <div class="campo"><label>o total de rollos</label>
+              <input inputmode="numeric" data-campo="cant_rollos" value="${lote.cant_rollos ?? ''}" ${soloLectura ? 'readonly' : ''}></div>
+          </div>
+        </div>
+
+        <div class="muestra">
+          <span class="dato"><span class="rotulo">Total en lote</span><b data-total>${lote.total_lote ?? '—'}</b></span>
+          <span class="dato destacado"><span class="rotulo">¡Revisar!</span><b data-muestra>${lote.muestra || '—'}</b></span>
+          <span class="pie-muestra">rollos a inspeccionar de este lote</span>
+        </div>
+
+        ${spec.length ? `
+          <div>
+            <p class="rotulo-bloque">2 · Debe tener — compáralo contra el producto</p>
+            <div class="spec">
+              ${spec.map(([k, v]) => `<span class="etiqueta"><i>${esc(k)}:</i> ${esc(v)}</span>`).join('')}
+            </div>
+          </div>` : ''}
+
+        <div>
+          <p class="rotulo-bloque">3 · Lo que revisas</p>
+          <div class="campos-linea">
+            <div class="campo"><label>Diámetro (lo mides)</label>
+              <input data-campo="diametro" maxlength="20" value="${esc(lote.diametro || '')}" ${soloLectura ? 'readonly' : ''}></div>
+            <div class="campo"><label>Medida del centro</label>
+              <select data-campo="medida_centro" ${soloLectura ? 'disabled' : ''}>
+                <option value="">Elige…</option>
+                ${medidas.map((m) => `<option value="${esc(m)}" ${lote.medida_centro === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+              </select></div>
+          </div>
+        </div>
+
+        <div>
+          <p class="rotulo-bloque">4 · Resultado</p>
+          <div class="campos-linea">
+            <div class="grupo-opciones">
+              <span class="rotulo-opciones">¿Impresión nítida?</span>
+              <div class="opciones">
+                <button class="opcion buena" data-campo="nitida" data-valor="si" aria-pressed="${marcado('nitida', 'si')}" ${soloLectura ? 'disabled' : ''}>Sí</button>
+                <button class="opcion mala" data-campo="nitida" data-valor="no" aria-pressed="${marcado('nitida', 'no')}" ${soloLectura ? 'disabled' : ''}>No</button>
+              </div>
+            </div>
+            <div class="grupo-opciones">
+              <span class="rotulo-opciones">Veredicto del lote</span>
+              <div class="opciones">
+                <button class="opcion buena" data-campo="resultado" data-valor="aprobado" aria-pressed="${marcado('resultado', 'aprobado')}" ${soloLectura ? 'disabled' : ''}>Aprobado</button>
+                <button class="opcion mala" data-campo="resultado" data-valor="rechazado" aria-pressed="${marcado('resultado', 'rechazado')}" ${soloLectura ? 'disabled' : ''}>Rechazado</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="zona-rechazo" ${lote.resultado === 'rechazado' || (lote.observacion || '').trim() || fotos.some((f) => f.lote_id === lote.id) ? '' : 'hidden'}>
+          <textarea class="obs ${lote.resultado === 'rechazado' && !(lote.observacion || '').trim() ? 'requerida' : ''}"
+            data-campo="observacion" style="display:block;width:100%"
+            placeholder="¿Qué tiene mal? Descríbelo para el proveedor"
+            ${soloLectura ? 'readonly' : ''}>${esc(lote.observacion || '')}</textarea>
+          ${tiraFotosLote(lote, fotos, soloLectura)}
+        </div>
+
+        ${lote.disposicion ? `
+          <div class="aviso info" style="margin:0">
+            <b>${esc(lote.disposicion_etiqueta || '')}</b>
+            Decidido por ${esc(lote.dispuso || '—')}${lote.confirmo ? `, confirmado por ${esc(lote.confirmo)}` : ' · falta confirmar'}.
+            ${lote.disposicion_nota ? `<br>${esc(lote.disposicion_nota)}` : ''}
+          </div>` : ''}
+      </div>
+    </article>`;
+}
+
+function tiraFotosLote(lote, fotos, soloLectura) {
+  const lista = fotos.filter((f) => f.lote_id === lote.id);
+  const falta = lote.resultado === 'rechazado' && lista.length === 0;
+  return `
+    <div class="evidencia ${falta ? 'falta' : ''}" data-fotos-lote="${lote.id}">
+      <div class="miniaturas">
+        ${lista.map((f) => `
+          <figure class="mini">
+            <img data-archivo="${esc(f.archivo)}" alt="Evidencia del defecto">
+            ${soloLectura ? '' : `<button class="quitar" data-quitar-foto="${f.id}" title="Quitar foto">×</button>`}
+          </figure>`).join('')}
+      </div>
+      ${soloLectura
+        ? (lista.length ? '' : '<span class="nota-foto">Sin evidencia</span>')
+        : `<button class="btn-camara" type="button" data-camara-lote="${lote.id}">
+             <span aria-hidden="true">📷</span> ${lista.length ? 'Otra foto' : 'Tomar foto'}
+           </button>
+           ${falta ? '<span class="nota-foto obligatoria">Foto obligatoria</span>' : ''}`}
+    </div>`;
+}
+
+// La firma de autorización solo se pide cuando hay algún lote rechazado: un
+// camión que llegó bien no tiene por qué esperar a que haya un Team Leader
+// disponible.
+function pintarFirmasCalidad(recepcion, soloLectura, exigeAutorizacion) {
+  const roles = [['calidad', 'Firma de quien hizo el muestreo', 'calidad_capturar']];
+  if (exigeAutorizacion || recepcion.firmas.some((f) => f.rol === 'autorizacion')) {
+    roles.push(['autorizacion', 'Firma de autorización (Team Leader)', 'calidad_autorizar']);
+  }
+
+  return roles.map(([rol, etiqueta, permisoFirma]) => {
+    const firma = recepcion.firmas.find((f) => f.rol === rol);
+
+    if (firma || soloLectura) {
+      return `
+        <section class="panel">
+          <h2>${etiqueta}</h2>
+          ${firma ? `<div class="firma-lista"><figure>
+              <img src="${esc(firma.imagen)}" alt="Firma de ${esc(firma.nombre)}">
+              <figcaption>${esc(firma.nombre)} · ${new Date(firma.firmado_en).toLocaleString('es-MX')}</figcaption>
+            </figure></div>`
+            : '<div class="vacio">Sin firmar</div>'}
+        </section>`;
+    }
+
+    if (!permiso(permisoFirma)) {
+      return `
+        <section class="panel">
+          <h2>${etiqueta}</h2>
+          <div class="vacio">Pendiente. La levanta un Team Leader o el Administrador desde su sesión.</div>
+        </section>`;
+    }
+
+    return `
+      <section class="panel">
+        <h2>${etiqueta}</h2>
+        <div class="firma-caja" data-firma="${rol}" data-url="/api/calidad/recepciones/${recepcion.id}/firma">
+          <canvas></canvas>
+          <div class="acciones">
+            <input class="obs" style="flex:1;min-height:auto" placeholder="Nombre de quien firma"
+                   value="${rol === 'calidad' ? esc(estado.usuario.nombre) : ''}">
+            <button class="btn" data-limpiar>Borrar</button>
+            <button class="btn primario" data-guardar-firma>Guardar firma</button>
+          </div>
+        </div>
+      </section>`;
+  }).join('');
+}
+
+// El recuadro de la firma de autorización solo existe si hay algún lote
+// rechazado. Al marcar el primero hay que dibujarlo, o quien captura toparía con
+// «falta la firma del Team Leader» sin tener dónde levantarla.
+function actualizarFirmasCalidad() {
+  const zona = document.getElementById('firmas-calidad');
+  if (!zona) return;
+  const hayRechazo = estado.recepcion.lotes.some((l) => l.resultado === 'rechazado');
+  if (hayRechazo === estado.exige_autorizacion) return;
+
+  estado.exige_autorizacion = hayRechazo;
+  zona.innerHTML = pintarFirmasCalidad(estado.recepcion, false, hayRechazo);
+  conectarFirmas();
+}
+
+// --- guardado automático de los lotes ---
+
+const pendientesLote = new Map();
+let temporizadorLote = null;
+
+function marcarLote(loteId, cambios) {
+  pendientesLote.set(loteId, { ...(pendientesLote.get(loteId) || {}), ...cambios });
+  clearTimeout(temporizadorLote);
+  temporizadorLote = setTimeout(descargarLotes, 600);
+}
+
+async function descargarLotes() {
+  clearTimeout(temporizadorLote);
+  const tanda = [...pendientesLote.entries()];
+  pendientesLote.clear();
+
+  for (const [id, cambios] of tanda) {
+    try {
+      const r = await api('PUT', `/api/calidad/lotes/${id}`, cambios);
+      const caja = vista.querySelector(`[data-lote="${id}"]`);
+      if (caja) {
+        caja.querySelector('[data-total]').textContent = r.total_lote ?? '—';
+        caja.querySelector('[data-muestra]').textContent = r.muestra || '—';
+      }
+      const aviso = document.getElementById('guardado-calidad');
+      if (aviso) {
+        aviso.classList.add('visible');
+        setTimeout(() => aviso.classList.remove('visible'), 1200);
+      }
+    } catch (err) {
+      mostrarMensaje(err.message, 'error');
+    }
+  }
+  actualizarResumenCalidad();
+}
+
+// Qué le falta a la recepción para poder cerrarse. Se calcula en la tablet para
+// que el pie diga la verdad sin ir al servidor en cada toque; el servidor
+// vuelve a comprobarlo al cerrar, que es lo que de verdad manda.
+function actualizarResumenCalidad() {
+  const zona = document.getElementById('resumen-calidad');
+  if (!zona || !estado.recepcion) return;
+
+  const lotes = estado.recepcion.lotes;
+  if (!lotes.length) { zona.textContent = 'Agrega al menos un lote.'; return; }
+
+  const completos = lotes.filter((l) => l.total_lote && l.diametro && l.medida_centro && l.nitida && l.resultado);
+  const rechazados = lotes.filter((l) => l.resultado === 'rechazado');
+  const faltanEvidencia = rechazados.filter(
+    (l) => !(l.observacion || '').trim() || !estado.recepcion.fotos.some((f) => f.lote_id === l.id)
+  );
+
+  const partes = [`${completos.length} de ${lotes.length} lote(s) listo(s)`];
+  if (rechazados.length) partes.push(`${rechazados.length} rechazado(s)`);
+  if (faltanEvidencia.length) partes.push(`${faltanEvidencia.length} sin observación o foto`);
+  zona.textContent = partes.join(' · ');
+}
+
+// --- captura: manejadores propios del módulo ---
+
+// Selector de fotos aparte del de los checklists. El de allá sube a
+// /api/llenados/…; compartirlo obligaría a que uno supiera del otro.
+const selectorFotosCalidad = document.createElement('input');
+selectorFotosCalidad.setAttribute('type', 'file');
+selectorFotosCalidad.setAttribute('accept', 'image/*');
+selectorFotosCalidad.setAttribute('capture', 'environment');
+selectorFotosCalidad.setAttribute('multiple', '');
+selectorFotosCalidad.hidden = true;
+document.body.appendChild(selectorFotosCalidad);
+
+let loteDestino = null;
+
+selectorFotosCalidad.addEventListener('change', async () => {
+  const archivos = [...selectorFotosCalidad.files];
+  selectorFotosCalidad.value = '';
+  if (!archivos.length || !loteDestino) return;
+
+  const caja = vista.querySelector(`[data-fotos-lote="${loteDestino}"]`);
+  const boton = caja && caja.querySelector('.btn-camara');
+  if (boton) { boton.disabled = true; boton.textContent = 'Subiendo…'; }
+
+  for (const archivo of archivos) {
+    try {
+      const guardado = await api('POST', `/api/calidad/lotes/${loteDestino}/fotos`, {
+        imagen: await comprimirImagen(archivo, 1600, 0.82),
+      });
+      estado.recepcion.fotos.push(guardado);
+    } catch (err) {
+      mostrarMensaje(`No se pudo subir «${archivo.name}»: ${err.message}`, 'error');
+    }
+  }
+  refrescarLote(loteDestino);
+});
+
+// Vuelve a dibujar un lote con lo que la tablet ya tiene en memoria. Se usa tras
+// subir o quitar una foto, para no recargar toda la recepción por una miniatura.
+function refrescarLote(loteId) {
+  const lote = estado.recepcion.lotes.find((l) => l.id === Number(loteId));
+  const caja = vista.querySelector(`[data-lote="${loteId}"]`);
+  if (!lote || !caja) return;
+
+  const { medidas_centro: medidas, fondos } = estado.catalogos_calidad;
+  const envoltorio = document.createElement('div');
+  envoltorio.innerHTML = pintarLote(lote, estado.recepcion.fotos, false, medidas, fondos);
+  caja.replaceWith(envoltorio.firstElementChild);
+  cargarImagenesPendientes();
+  actualizarResumenCalidad();
+}
+
+let temporizadorNotasCalidad = null;
+
+function conectarCalidad() {
+  const zona = vista.querySelector('.captura-calidad');
+
+  const agregar = document.getElementById('agregar-lote');
+  if (agregar) {
+    agregar.addEventListener('click', async () => {
+      const materialId = document.getElementById('l-modelo').value;
+      if (!materialId) return mostrarMensaje('Elige el modelo que llegó.', 'error');
+      try {
+        await descargarLotes();
+        await api('POST', `/api/calidad/recepciones/${estado.recepcion.id}/lotes`, {
+          material_id: Number(materialId),
+          fondo: document.getElementById('l-fondo').value || null,
+        });
+        vistaRecepcion(estado.recepcion.id);
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+    });
+  }
+
+  zona.addEventListener('click', async (e) => {
+    const opcion = e.target.closest('.opcion');
+    if (opcion) {
+      const caja = opcion.closest('[data-lote]');
+      const lote = estado.recepcion.lotes.find((l) => l.id === Number(caja.dataset.lote));
+      const campo = opcion.dataset.campo;
+      const yaEstaba = opcion.getAttribute('aria-pressed') === 'true';
+      const valor = yaEstaba ? null : opcion.dataset.valor;
+
+      opcion.closest('.opciones').querySelectorAll('.opcion').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+      if (valor) opcion.setAttribute('aria-pressed', 'true');
+      lote[campo] = valor;
+
+      if (campo === 'resultado') {
+        // Un rechazo abre la zona de evidencia y la deja marcada como pendiente:
+        // es justo lo que en papel se perdía cuando solo se tachaba la casilla.
+        caja.classList.remove('aprobado', 'rechazado');
+        if (valor) caja.classList.add(valor);
+        const zonaRechazo = caja.querySelector('.zona-rechazo');
+        const obs = zonaRechazo.querySelector('.obs');
+        zonaRechazo.hidden = valor !== 'rechazado' && !obs.value.trim();
+        obs.classList.toggle('requerida', valor === 'rechazado' && !obs.value.trim());
+        const tira = zonaRechazo.querySelector('.evidencia');
+        const sinFoto = !estado.recepcion.fotos.some((f) => f.lote_id === lote.id);
+        tira.classList.toggle('falta', valor === 'rechazado' && sinFoto);
+        const etiqueta = caja.querySelector('header .etiqueta:last-of-type');
+        if (etiqueta) {
+          etiqueta.className = `etiqueta ${valor === 'aprobado' ? 'verde' : valor === 'rechazado' ? 'roja' : 'ambar'}`;
+          etiqueta.textContent = valor === 'aprobado' ? 'Aprobado' : valor === 'rechazado' ? 'Rechazado' : 'Sin revisar';
+        }
+        if (valor === 'rechazado') obs.focus();
+        actualizarFirmasCalidad();
+      }
+
+      marcarLote(lote.id, { [campo]: valor });
+      actualizarResumenCalidad();
+      return;
+    }
+
+    const camara = e.target.closest('[data-camara-lote]');
+    if (camara) {
+      loteDestino = camara.dataset.camaraLote;
+      selectorFotosCalidad.click();
+      return;
+    }
+
+    const quitarFoto = e.target.closest('[data-quitar-foto]');
+    if (quitarFoto) {
+      const id = Number(quitarFoto.dataset.quitarFoto);
+      const loteId = quitarFoto.closest('[data-lote]').dataset.lote;
+      try {
+        await api('DELETE', `/api/calidad/fotos/${id}`);
+        estado.recepcion.fotos = estado.recepcion.fotos.filter((f) => f.id !== id);
+        refrescarLote(loteId);
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+      return;
+    }
+
+    const quitarLote = e.target.closest('[data-quitar-lote]');
+    if (quitarLote) {
+      const caja = quitarLote.closest('[data-lote]');
+      const lote = estado.recepcion.lotes.find((l) => l.id === Number(caja.dataset.lote));
+      if (!confirm(`¿Quitar el lote «${lote.modelo}» de esta recepción?`)) return;
+      try {
+        await api('DELETE', `/api/calidad/lotes/${lote.id}`);
+        vistaRecepcion(estado.recepcion.id);
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+      return;
+    }
+
+    const miniatura = e.target.closest('.mini img');
+    if (miniatura && miniatura.src) ampliarFoto(miniatura.src);
+  });
+
+  zona.addEventListener('input', (e) => {
+    const campo = e.target.closest('[data-campo]');
+    if (campo) {
+      const caja = campo.closest('[data-lote]');
+      const lote = estado.recepcion.lotes.find((l) => l.id === Number(caja.dataset.lote));
+      lote[campo.dataset.campo] = campo.value;
+      if (campo.dataset.campo === 'observacion') {
+        campo.classList.toggle('requerida', lote.resultado === 'rechazado' && !campo.value.trim());
+      }
+      marcarLote(lote.id, { [campo.dataset.campo]: campo.value });
+      return;
+    }
+
+    const notas = e.target.closest('#notas-recepcion');
+    if (notas) {
+      clearTimeout(temporizadorNotasCalidad);
+      temporizadorNotasCalidad = setTimeout(() => {
+        api('PUT', `/api/calidad/recepciones/${estado.recepcion.id}`, { notas: notas.value })
+          .catch((err) => mostrarMensaje(err.message, 'error'));
+      }, 800);
+    }
+  });
+
+  // Los <select> no disparan 'input' en todos los navegadores de tablet.
+  zona.addEventListener('change', (e) => {
+    const campo = e.target.closest('select[data-campo]');
+    if (!campo) return;
+    const caja = campo.closest('[data-lote]');
+    const lote = estado.recepcion.lotes.find((l) => l.id === Number(caja.dataset.lote));
+    lote[campo.dataset.campo] = campo.value;
+    marcarLote(lote.id, { [campo.dataset.campo]: campo.value });
+    actualizarResumenCalidad();
+  });
+
+  const cerrar = document.getElementById('cerrar-recepcion');
+  if (cerrar) {
+    cerrar.addEventListener('click', async () => {
+      await descargarLotes();
+      cerrar.disabled = true;
+      try {
+        await api('POST', `/api/calidad/recepciones/${estado.recepcion.id}/cerrar`);
+        mostrarMensaje('Recepción cerrada.', 'exito');
+        setTimeout(() => { location.hash = '#/calidad'; }, 900);
+      } catch (err) {
+        mostrarMensaje(err.message, 'error');
+        cerrar.disabled = false;
+      }
+    });
+  }
+}
+
+// ------------------------------------------- calidad: lotes rechazados
+
+async function vistaCalidadPendientes() {
+  encabezado('Lotes rechazados', 'Qué se hizo con el material');
+  const datos = await api('GET', '/api/calidad/pendientes');
+
+  const puedeResolver = permiso('calidad_resolver');
+  const puedeConfirmar = permiso('calidad_autorizar');
+
+  const tarjetaLote = (l, seccion) => `
+    <article class="lote rechazado" data-pendiente="${l.id}">
+      <header>
+        <b>${esc(l.modelo)}</b>
+        ${l.fondo ? `<span class="etiqueta">${esc(l.fondo)}</span>` : ''}
+        <span class="etiqueta roja">Rechazado</span>
+      </header>
+      <div class="cuerpo">
+        <p class="meta">Remisión ${esc(l.remision)} · ${esc(l.proveedor)} · llegó ${fechaCorta(l.fecha_llegada)}
+          · lote de ${l.total_lote ?? '—'} rollos, se revisaron ${l.muestra ?? '—'}</p>
+        ${l.observacion ? `<p><b>Motivo:</b> ${esc(l.observacion)}</p>` : ''}
+        ${l.fotos.length ? `<div class="miniaturas">${l.fotos.map((f) => `
+          <figure class="mini"><img data-archivo="${esc(f.archivo)}" alt="Evidencia"></figure>`).join('')}</div>` : ''}
+
+        ${l.disposicion ? `
+          <div class="aviso ${l.confirmado_en ? 'exito' : 'info'}" style="margin:0">
+            <b>${esc(l.etiqueta_disposicion)}</b> — decidido por ${esc(l.dispuso || '—')}${l.confirmado_en
+              ? `, confirmado por ${esc(l.confirmo)} el ${new Date(l.confirmado_en).toLocaleDateString('es-MX')}.`
+              : '.'}
+            ${l.disposicion_nota ? `<br>${esc(l.disposicion_nota)}` : ''}
+          </div>` : ''}
+
+        ${seccion === 'sin_resolver' && puedeResolver ? `
+          <div class="campos-linea">
+            <div class="campo" style="flex:1;min-width:220px">
+              <label>¿Qué se hace con este lote?</label>
+              <select data-disposicion="${l.id}">
+                <option value="">Elige…</option>
+                ${datos.disposiciones.map((d) => `<option value="${esc(d.clave)}">${esc(d.etiqueta)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="flex:2;min-width:220px">
+              <label>Nota (opcional)</label>
+              <input data-nota="${l.id}" placeholder="Acordado con el proveedor, folio, etc.">
+            </div>
+            <button class="btn primario" data-guardar-disposicion="${l.id}">Registrar</button>
+          </div>` : ''}
+
+        ${seccion === 'por_confirmar' ? (puedeConfirmar
+          ? `<div class="fila-botones"><button class="btn primario" data-confirmar="${l.id}">Confirmar y cerrar</button></div>`
+          : '<p class="explica" style="padding:0">Falta que un Team Leader o el Administrador lo confirme.</p>') : ''}
+      </div>
+    </article>`;
+
+  const seccion = (titulo, clave, lista, vacio) => `
+    <section class="panel">
+      <h2>${titulo} ${lista.length ? `<span class="etiqueta ${clave === 'resueltos' ? 'verde' : 'roja'}">${lista.length}</span>` : ''}</h2>
+      <div style="padding:18px">
+        ${lista.length ? lista.map((l) => tarjetaLote(l, clave)).join('') : `<div class="vacio">${vacio}</div>`}
+      </div>
+    </section>`;
+
+  vista.innerHTML = `
+    <div class="migaja">
+      <button data-ir-menu>← Menú</button><span>/</span>
+      <button data-ir-calidad>Calidad</button><span>/</span><span>Rechazados</span>
+    </div>
+    <div id="mensajes"></div>
+    <p class="explica" style="padding:0 0 16px">
+      Un lote rechazado lo resuelve quien tenga ese permiso y lo confirma otra persona.
+      Quien decide no confirma su propia decisión.
+    </p>
+    ${seccion('Sin resolver', 'sin_resolver', datos.sin_resolver, 'Nada pendiente por decidir.')}
+    ${seccion('Por confirmar', 'por_confirmar', datos.por_confirmar, 'Nada esperando confirmación.')}
+    ${seccion('Cerrados', 'resueltos', datos.resueltos, 'Todavía no se ha cerrado ningún rechazo.')}`;
+
+  vista.querySelector('[data-ir-menu]').addEventListener('click', () => { location.hash = '#/menu'; });
+  vista.querySelector('[data-ir-calidad]').addEventListener('click', () => { location.hash = '#/calidad'; });
+  cargarImagenesPendientes();
+
+  vista.querySelectorAll('[data-guardar-disposicion]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const id = b.dataset.guardarDisposicion;
+      const disposicion = vista.querySelector(`[data-disposicion="${id}"]`).value;
+      if (!disposicion) return mostrarMensaje('Elige qué se hace con el lote.', 'error');
+      try {
+        await api('POST', `/api/calidad/lotes/${id}/disposicion`, {
+          disposicion,
+          nota: vista.querySelector(`[data-nota="${id}"]`).value,
+        });
+        vistaCalidadPendientes();
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+    });
+  });
+
+  vista.querySelectorAll('[data-confirmar]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      try {
+        await api('POST', `/api/calidad/lotes/${b.dataset.confirmar}/confirmar`);
+        vistaCalidadPendientes();
+      } catch (err) { mostrarMensaje(err.message, 'error'); }
+    });
+  });
+}
+
+// -------------------------------------------------- calidad: reportes
+
+async function vistaCalidadReportes() {
+  encabezado('Reportes de Calidad', 'Muestreo de material recibido');
+  const { lotes, resumen, proveedores, etiquetas_disposicion: etiquetas } = await api('GET', '/api/calidad/reportes');
+
+  const porcentaje = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
+
+  vista.innerHTML = `
+    <div class="migaja">
+      <button data-ir-menu>← Menú</button><span>/</span>
+      <button data-ir-calidad>Calidad</button><span>/</span><span>Reportes</span>
+    </div>
+    <div id="mensajes"></div>
+
+    <section class="panel">
+      <h2>Resumen</h2>
+      <div class="indicadores">
+        <div class="indicador"><span class="rotulo">Lotes revisados</span><b>${resumen.lotes}</b>
+          <span class="pie-ind">${resumen.rollos.toLocaleString('es-MX')} rollos recibidos</span></div>
+        <div class="indicador"><span class="rotulo">Rollos inspeccionados</span><b>${resumen.revisados.toLocaleString('es-MX')}</b>
+          <span class="pie-ind">raíz cuadrada de cada lote</span></div>
+        <div class="indicador"><span class="rotulo">Lotes rechazados</span><b>${resumen.rechazados}</b>
+          <span class="pie-ind">${porcentaje(resumen.rechazados, resumen.lotes)} de lo revisado</span></div>
+        <div class="indicador"><span class="rotulo">Sin resolver</span><b>${resumen.sin_resolver}</b>
+          <span class="pie-ind">esperando decisión o confirmación</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Por proveedor</h2>
+      ${proveedores.length ? `<div class="desliza"><table class="captura">
+        <thead><tr><th class="fila-titulo">Proveedor</th><th>Lotes</th><th>Rechazados</th><th>Índice</th><th>Rollos</th></tr></thead>
+        <tbody>${proveedores.map((p) => `
+          <tr>
+            <th class="fila-titulo">${esc(p.proveedor)}</th>
+            <td>${p.lotes}</td>
+            <td class="${p.rechazados ? 'con-problema' : ''}">${p.rechazados}</td>
+            <td>${porcentaje(p.rechazados, p.lotes)}</td>
+            <td>${p.rollos.toLocaleString('es-MX')}</td>
+          </tr>`).join('')}
+        </tbody></table></div>`
+        : '<div class="vacio">Todavía no hay muestreos capturados.</div>'}
+    </section>
+
+    <section class="panel">
+      <h2>Detalle por lote</h2>
+      ${lotes.length ? `<div class="desliza"><table class="captura">
+        <thead><tr>
+          <th class="fila-titulo">Modelo</th><th>Fondo</th><th>Proveedor</th><th>Remisión</th>
+          <th>Llegada</th><th>Lote</th><th>Revisados</th><th>Diámetro</th><th>Centro</th>
+          <th>Nítida</th><th>Resultado</th><th>Disposición</th>
+        </tr></thead>
+        <tbody>${lotes.map((l) => `
+          <tr>
+            <th class="fila-titulo">${esc(l.modelo)}</th>
+            <td>${esc(l.fondo || '—')}</td>
+            <td>${esc(l.proveedor)}</td>
+            <td>${esc(l.remision)}</td>
+            <td>${fechaCorta(l.fecha_llegada)}</td>
+            <td>${l.total_lote ?? '—'}</td>
+            <td>${l.muestra ?? '—'}</td>
+            <td>${esc(l.diametro || '—')}${l.diam_referencia ? `<br><small style="color:var(--tinta-suave)">ref. ${esc(l.diam_referencia)}</small>` : ''}</td>
+            <td>${esc(l.medida_centro || '—')}</td>
+            <td>${l.nitida === 'si' ? 'Sí' : l.nitida === 'no' ? 'No' : '—'}</td>
+            <td class="${l.resultado === 'rechazado' ? 'con-problema' : ''}">${
+              l.resultado === 'aprobado' ? 'Aprobado' : l.resultado === 'rechazado' ? 'Rechazado' : '—'}</td>
+            <td>${l.disposicion ? esc(etiquetas[l.disposicion]) : (l.resultado === 'rechazado' ? 'Pendiente' : '—')}</td>
+          </tr>`).join('')}
+        </tbody></table></div>`
+        : '<div class="vacio">Sin datos todavía.</div>'}
+      <div class="bloque-form">
+        <button class="btn" id="exportar-calidad">Descargar todo en Excel (CSV)</button>
+      </div>
+    </section>`;
+
+  vista.querySelector('[data-ir-menu]').addEventListener('click', () => { location.hash = '#/menu'; });
+  vista.querySelector('[data-ir-calidad]').addEventListener('click', () => { location.hash = '#/calidad'; });
+  document.getElementById('exportar-calidad').addEventListener('click', () => descargarCSV('/api/calidad/exportar.csv', 'calidad-muestreo.csv'));
+}
+
+// La exportación va protegida por sesión, así que no basta con un enlace: hay
+// que pedirla con el token y entregar el archivo desde un blob local.
+async function descargarCSV(ruta, nombre) {
+  try {
+    const res = await fetch(ruta, { headers: { Authorization: `Bearer ${estado.token}` } });
+    if (!res.ok) throw new Error('No se pudo generar el archivo');
+    const url = URL.createObjectURL(await res.blob());
+    const enlace = document.createElement('a');
+    enlace.href = url;
+    enlace.download = nombre;
+    enlace.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    mostrarMensaje(err.message, 'error');
+  }
+}
+
 const RUTAS = [
   [/^#\/menu$/, vistaMenu],
   [/^#\/acceso$/, vistaAcceso, null, false],
@@ -2256,6 +3289,10 @@ const RUTAS = [
   [/^#\/reportes$/, vistaReportes, 'reportes'],
   [/^#\/comparativa$/, vistaComparativa, 'comparativa'],
   [/^#\/detalle\/(\d+)$/, vistaDetalle, 'reportes'],
+  [/^#\/calidad$/, vistaCalidad, 'mod_calidad'],
+  [/^#\/calidad\/pendientes$/, vistaCalidadPendientes, 'mod_calidad'],
+  [/^#\/calidad\/reportes$/, vistaCalidadReportes, 'calidad_reportes'],
+  [/^#\/recepcion\/(\d+)$/, vistaRecepcion, 'mod_calidad'],
   [/^#\/config(?:\/([\w-]+))?$/, vistaConfig, 'configuracion'],
 ];
 
@@ -2305,5 +3342,6 @@ async function enrutar() {
 
 window.addEventListener('hashchange', enrutar);
 window.addEventListener('beforeunload', descargarPendientes);
+window.addEventListener('beforeunload', descargarLotes);
 conectarCaptura();
 dormir();

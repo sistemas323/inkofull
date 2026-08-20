@@ -840,3 +840,88 @@ table.captura tr.inactiva td.fila-titulo { text-decoration: line-through; }
   .barra .marca img { height: 24px; }
   .barra .titulo h1 { font-size: 16px; }
 }
+
+/* ------------------------------------------------------------- calidad */
+
+/* Un lote del muestreo. En papel era un renglón larguísimo de 19 columnas;
+   aquí se abre en vertical, por bloques numerados, para que quepa en tablet. */
+.lote {
+  border: 1px solid var(--azul-borde);
+  border-radius: var(--radio);
+  background: var(--blanco);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.lote > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--gris);
+  border-bottom: 1px solid var(--azul-borde);
+}
+
+.lote > header b { font-family: var(--fuente-titulo); font-size: 17px; flex: 1; min-width: 0; }
+.lote.aprobado { border-color: #BFE3CE; }
+.lote.aprobado > header { background: var(--ok-suave); }
+.lote.rechazado { border-color: #E8C4C0; }
+.lote.rechazado > header { background: var(--alerta-suave); }
+
+.lote > header .quitar {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--azul-borde);
+  border-radius: 8px;
+  background: var(--blanco);
+  color: var(--tinta-suave);
+  font-size: 18px;
+  line-height: 1;
+}
+.lote > header .quitar:hover { border-color: var(--alerta); color: var(--alerta); background: var(--alerta-suave); }
+
+.lote .cuerpo { padding: 16px; display: grid; gap: 18px; }
+.lote .meta { font-size: 14px; color: var(--tinta-suave); }
+
+.rotulo-bloque {
+  font-size: 12.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--tinta-suave);
+  margin-bottom: 10px;
+}
+
+.campos-linea { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+.campos-linea .campo { margin-bottom: 0; min-width: 130px; }
+
+/* El número que contesta el sistema: cuántos rollos hay que revisar. Era la
+   columna verde de la hoja y es lo único que la persona necesita leer de un
+   vistazo antes de ir por la muestra. */
+.muestra {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  background: var(--azul-claro);
+  border-radius: 10px;
+  padding: 12px 18px;
+}
+
+.muestra .dato { display: flex; flex-direction: column; }
+.muestra .rotulo { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--tinta-suave); }
+.muestra .dato b { font-family: var(--fuente-titulo); font-size: 26px; line-height: 1.1; color: var(--azul-inko); }
+.muestra .destacado b { font-size: 32px; color: var(--ok); }
+.muestra .pie-muestra { font-size: 13.5px; color: var(--tinta-suave); }
+
+/* La especificación del catálogo. Es lo que en el Excel se llenaba solo y venía
+   en gris: no se escribe, se compara contra el producto que está en la mano. */
+.spec { display: flex; flex-wrap: wrap; gap: 8px; }
+.spec .etiqueta { background: var(--gris); color: var(--tinta); text-transform: none; letter-spacing: 0; }
+.spec .etiqueta i { font-style: normal; font-weight: 500; color: var(--tinta-suave); }
+
+.grupo-opciones { display: flex; flex-direction: column; gap: 7px; }
+.rotulo-opciones { font-size: 13.5px; font-weight: 700; color: var(--azul-inko); }
+
+.zona-rechazo { display: grid; gap: 12px; }
