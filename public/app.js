@@ -390,7 +390,7 @@ function pintarNavegacion() {
     ${estado.usuario && permiso('comparativa') && enModuloChecklists()
       ? '<button class="btn" data-ir="#/comparativa">Comparativa</button>' : ''}
     ${estado.usuario && enModuloCalidad()
-      ? '<button class="btn" data-ir="#/calidad/pendientes">Rechazados</button>' : ''}
+      ? '<button class="btn" data-ir="#/calidad/pendientes">Aprobaciones</button>' : ''}
     ${estado.usuario && permiso('calidad_reportes') && enModuloCalidad()
       ? '<button class="btn" data-ir="#/calidad/reportes">Reportes</button>' : ''}
     ${estado.usuario ? '<button class="btn" data-salir>Salir</button>' : ''}`;
@@ -2408,7 +2408,8 @@ function editarPersona(persona, roles) {
 
 const ETIQUETA_RECEPCION = {
   borrador: ['ambar', 'En captura'],
-  cerrado: ['verde', 'Cerrada'],
+  cerrado: ['azul', 'Sin visto bueno'],
+  aprobado: ['verde', 'Aprobada'],
 };
 
 // toISOString() da la fecha en UTC: a las 7 de la tarde en México ya sería el
@@ -2430,7 +2431,8 @@ async function vistaCalidad() {
   const { recepciones, pendientes } = await api('GET', '/api/calidad/recepciones');
 
   const abiertas = recepciones.filter((r) => r.estado === 'borrador');
-  const cerradas = recepciones.filter((r) => r.estado === 'cerrado');
+  const sinVistoBueno = recepciones.filter((r) => r.estado === 'cerrado');
+  const aprobadas = recepciones.filter((r) => r.estado === 'aprobado');
 
   const tarjeta = (r) => {
     const [color, texto] = ETIQUETA_RECEPCION[r.estado] || ['', r.estado];
@@ -2452,8 +2454,8 @@ async function vistaCalidad() {
     ${pendientes ? `
       <button class="aviso pendientes" data-ir-pendientes>
         <span class="cuenta">${pendientes}</span>
-        <span><b>Lote(s) rechazado(s) sin resolver.</b>
-          <small>Falta decidir qué se hace con el material.</small></span>
+        <span><b>Pendiente(s) de aprobación.</b>
+          <small>Recepciones sin visto bueno o rechazos sin decidir.</small></span>
         <span class="flecha" aria-hidden="true">›</span>
       </button>` : ''}
 
@@ -2469,10 +2471,16 @@ async function vistaCalidad() {
         : '<div class="vacio">No hay recepciones abiertas.</div>'}
     </section>
 
-    ${cerradas.length ? `
+    ${sinVistoBueno.length ? `
       <section class="panel">
-        <h2>Cerradas <span class="etiqueta verde">${cerradas.length}</span></h2>
-        <div class="rejilla-tareas" style="padding:18px">${cerradas.map(tarjeta).join('')}</div>
+        <h2>Esperando visto bueno <span class="etiqueta azul">${sinVistoBueno.length}</span></h2>
+        <div class="rejilla-tareas" style="padding:18px">${sinVistoBueno.map(tarjeta).join('')}</div>
+      </section>` : ''}
+
+    ${aprobadas.length ? `
+      <section class="panel">
+        <h2>Aprobadas <span class="etiqueta verde">${aprobadas.length}</span></h2>
+        <div class="rejilla-tareas" style="padding:18px">${aprobadas.map(tarjeta).join('')}</div>
       </section>` : ''}`;
 
   vista.querySelector('[data-ir-menu]').addEventListener('click', () => { location.hash = '#/menu'; });
@@ -2556,7 +2564,7 @@ async function vistaRecepcion(id) {
 
   estado.recepcion = recepcion;
   estado.exige_autorizacion = exigeAutorizacion;
-  const soloLectura = recepcion.estado === 'cerrado';
+  const soloLectura = recepcion.estado !== 'borrador';
 
   encabezado(`Remisión ${recepcion.remision}`, `${recepcion.proveedor} · llegó ${fechaCorta(recepcion.fecha_llegada)}`);
 
@@ -2568,9 +2576,7 @@ async function vistaRecepcion(id) {
     <div id="mensajes"></div>
 
     <div class="captura-calidad">
-      ${soloLectura ? `<div class="aviso info">Recepción cerrada el
-        ${new Date(recepcion.cerrado_en).toLocaleString('es-MX')} por ${esc(recepcion.cerro || recepcion.capturo)}.
-        Ya no se modifica.</div>` : ''}
+      ${soloLectura ? bandaDeAprobacion(recepcion) : ''}
 
       <section class="panel">
         <h2>Lotes de esta remisión ${recepcion.lotes.length ? `<span class="etiqueta azul">${recepcion.lotes.length}</span>` : ''}</h2>
@@ -2628,8 +2634,65 @@ async function vistaRecepcion(id) {
   vista.querySelector('[data-ir-calidad]').addEventListener('click', () => { location.hash = '#/calidad'; });
   cargarImagenesPendientes();
   conectarFirmas();
+  conectarAprobacionRecepcion(recepcion.id);
   if (!soloLectura) conectarCalidad();
   actualizarResumenCalidad();
+}
+
+// Los dos botones del Administrador sobre una recepción cerrada. Van aparte de
+// conectarCalidad() porque esa solo se engancha mientras la recepción se captura,
+// y estos aparecen justo cuando ya no.
+function conectarAprobacionRecepcion(id) {
+  const visto = document.getElementById('aprobar-recepcion');
+  if (visto) {
+    visto.addEventListener('click', async () => {
+      visto.disabled = true;
+      try {
+        await api('POST', `/api/calidad/recepciones/${id}/aprobar`);
+        vistaRecepcion(id);
+      } catch (err) { mostrarMensaje(err.message, 'error'); visto.disabled = false; }
+    });
+  }
+
+  const reabrir = document.getElementById('reabrir-recepcion');
+  if (reabrir) {
+    reabrir.addEventListener('click', async () => {
+      const motivo = prompt('Reabrir la devuelve a captura para poder corregirla. ¿Por qué? Queda registrado.');
+      if (!motivo || !motivo.trim()) return;
+      reabrir.disabled = true;
+      try {
+        await api('POST', `/api/calidad/recepciones/${id}/reabrir`, { motivo });
+        vistaRecepcion(id);
+      } catch (err) { mostrarMensaje(err.message, 'error'); reabrir.disabled = false; }
+    });
+  }
+}
+
+// Qué se ve arriba de una recepción que ya no se toca: si está esperando el
+// visto bueno del Administrador o si ya lo tiene, y —solo para él— los botones
+// para darlo o para devolverla a captura.
+function bandaDeAprobacion(recepcion) {
+  const puedeAprobar = permiso('calidad_aprobar');
+  const historial = (recepcion.reversiones || []).map((v) => `
+    <br><small>Reabierta por ${esc(v.nombre || '—')} el ${new Date(v.ocurrido_en).toLocaleDateString('es-MX')}: ${esc(v.motivo)}</small>`).join('');
+
+  const acciones = puedeAprobar ? `
+    <div class="fila-botones" style="margin-top:12px">
+      ${recepcion.estado === 'cerrado' ? '<button class="btn primario" id="aprobar-recepcion">Dar visto bueno</button>' : ''}
+      <button class="btn peligro" id="reabrir-recepcion">Reabrir para corregir</button>
+    </div>` : '';
+
+  if (recepcion.estado === 'aprobado') {
+    return `<div class="aviso exito">
+      <b>Aprobada por ${esc(recepcion.aprobo || '—')}</b> el ${new Date(recepcion.aprobado_en).toLocaleString('es-MX')}.
+      Cerrada por ${esc(recepcion.cerro || recepcion.capturo)}.${historial}${acciones}
+    </div>`;
+  }
+  return `<div class="aviso info">
+    <b>Cerrada, esperando el visto bueno del Administrador.</b>
+    La cerró ${esc(recepcion.cerro || recepcion.capturo)} el ${new Date(recepcion.cerrado_en).toLocaleString('es-MX')}.
+    Ya no se modifica.${historial}${acciones}
+  </div>`;
 }
 
 // Un lote: lo que se escribe, lo que el sistema contesta, la especificación
@@ -2729,10 +2792,15 @@ function pintarLote(lote, fotos, soloLectura, medidas, fondos) {
         </div>
 
         ${lote.disposicion ? `
-          <div class="aviso info" style="margin:0">
-            <b>${esc(lote.disposicion_etiqueta || '')}</b>
-            Decidido por ${esc(lote.dispuso || '—')}${lote.confirmo ? `, confirmado por ${esc(lote.confirmo)}` : ' · falta confirmar'}.
+          <div class="aviso exito" style="margin:0">
+            <b>Aprobado: ${esc(lote.etiqueta_disposicion || '')}</b> — por ${esc(lote.aprobo || '—')}.
             ${lote.disposicion_nota ? `<br>${esc(lote.disposicion_nota)}` : ''}
+          </div>`
+        : lote.propuesta ? `
+          <div class="aviso info" style="margin:0">
+            <b>Propuesta: ${esc(lote.etiqueta_propuesta || '')}</b> — de ${esc(lote.propuso || '—')}.
+            Falta la aprobación del Administrador.
+            ${lote.propuesta_nota ? `<br>${esc(lote.propuesta_nota)}` : ''}
           </div>` : ''}
       </div>
     </article>`;
@@ -3076,16 +3144,26 @@ function conectarCalidad() {
   }
 }
 
-// ------------------------------------------- calidad: lotes rechazados
+// ------------------------------------------- calidad: lo que espera aprobación
 
+// Un rechazo pasa por tres momentos: alguien propone qué hacer, el Administrador
+// aprueba —pudiendo cambiar la salida— y con eso cierra. Aquí viven los tres,
+// más las recepciones que esperan su visto bueno.
 async function vistaCalidadPendientes() {
-  encabezado('Lotes rechazados', 'Qué se hizo con el material');
+  encabezado('Aprobaciones', 'Lo que espera al Administrador');
   const datos = await api('GET', '/api/calidad/pendientes');
 
-  const puedeResolver = permiso('calidad_resolver');
-  const puedeConfirmar = permiso('calidad_autorizar');
+  const puedeProponer = permiso('calidad_proponer');
+  const puedeAprobar = permiso('calidad_aprobar');
 
-  const tarjetaLote = (l, seccion) => `
+  const selectorDisposicion = (id, valor) => `
+    <select data-disposicion="${id}">
+      <option value="">Elige…</option>
+      ${datos.disposiciones.map((d) => `
+        <option value="${esc(d.clave)}" ${d.clave === valor ? 'selected' : ''}>${esc(d.etiqueta)}</option>`).join('')}
+    </select>`;
+
+  const tarjetaLote = (l) => `
     <article class="lote rechazado" data-pendiente="${l.id}">
       <header>
         <b>${esc(l.modelo)}</b>
@@ -3099,84 +3177,172 @@ async function vistaCalidadPendientes() {
         ${l.fotos.length ? `<div class="miniaturas">${l.fotos.map((f) => `
           <figure class="mini"><img data-archivo="${esc(f.archivo)}" alt="Evidencia"></figure>`).join('')}</div>` : ''}
 
-        ${l.disposicion ? `
-          <div class="aviso ${l.confirmado_en ? 'exito' : 'info'}" style="margin:0">
-            <b>${esc(l.etiqueta_disposicion)}</b> — decidido por ${esc(l.dispuso || '—')}${l.confirmado_en
-              ? `, confirmado por ${esc(l.confirmo)} el ${new Date(l.confirmado_en).toLocaleDateString('es-MX')}.`
-              : '.'}
-            ${l.disposicion_nota ? `<br>${esc(l.disposicion_nota)}` : ''}
+        ${l.propuesta ? `
+          <div class="aviso info" style="margin:0">
+            <b>Propuesta: ${esc(l.etiqueta_propuesta)}</b> — de ${esc(l.propuso || '—')}
+            ${l.propuesta_nota ? `<br>${esc(l.propuesta_nota)}` : ''}
           </div>` : ''}
 
-        ${seccion === 'sin_resolver' && puedeResolver ? `
+        ${l.momento === 'cerrado' ? `
+          <div class="aviso exito" style="margin:0">
+            <b>Aprobado: ${esc(l.etiqueta_disposicion)}</b> — por ${esc(l.aprobo || '—')}
+            el ${new Date(l.aprobado_en).toLocaleDateString('es-MX')}.
+            ${l.etiqueta_propuesta && l.disposicion !== l.propuesta
+              ? '<br>El Administrador aprobó una salida distinta de la propuesta.' : ''}
+            ${l.disposicion_nota ? `<br>${esc(l.disposicion_nota)}` : ''}
+          </div>
+          ${puedeAprobar ? `
+            <div class="fila-botones">
+              <button class="btn peligro" data-reabrir-lote="${l.id}">Reabrir</button>
+            </div>` : ''}` : ''}
+
+        ${l.momento === 'por_proponer' && puedeProponer ? `
           <div class="campos-linea">
             <div class="campo" style="flex:1;min-width:220px">
-              <label>¿Qué se hace con este lote?</label>
-              <select data-disposicion="${l.id}">
-                <option value="">Elige…</option>
-                ${datos.disposiciones.map((d) => `<option value="${esc(d.clave)}">${esc(d.etiqueta)}</option>`).join('')}
-              </select>
+              <label>¿Qué propones hacer con este lote?</label>
+              ${selectorDisposicion(l.id, null)}
             </div>
             <div class="campo" style="flex:2;min-width:220px">
               <label>Nota (opcional)</label>
-              <input data-nota="${l.id}" placeholder="Acordado con el proveedor, folio, etc.">
+              <input data-nota="${l.id}" placeholder="Lo hablado con el proveedor, folio, etc.">
             </div>
-            <button class="btn primario" data-guardar-disposicion="${l.id}">Registrar</button>
+            <button class="btn primario" data-proponer="${l.id}">Proponer</button>
           </div>` : ''}
+        ${l.momento === 'por_proponer' && !puedeProponer
+          ? '<p class="explica" style="padding:0">Falta que un Team Leader proponga qué hacer.</p>' : ''}
 
-        ${seccion === 'por_confirmar' ? (puedeConfirmar
-          ? `<div class="fila-botones"><button class="btn primario" data-confirmar="${l.id}">Confirmar y cerrar</button></div>`
-          : '<p class="explica" style="padding:0">Falta que un Team Leader o el Administrador lo confirme.</p>') : ''}
+        ${l.momento === 'por_aprobar' && puedeAprobar ? `
+          <div class="campos-linea">
+            <div class="campo" style="flex:1;min-width:220px">
+              <label>Aprobar como</label>
+              ${selectorDisposicion(l.id, l.propuesta)}
+            </div>
+            <div class="campo" style="flex:2;min-width:220px">
+              <label>Nota (opcional)</label>
+              <input data-nota="${l.id}" placeholder="Tu instrucción o el acuerdo final">
+            </div>
+            <button class="btn primario" data-aprobar-lote="${l.id}">Aprobar y cerrar</button>
+            <button class="btn" data-devolver="${l.id}">Devolver</button>
+          </div>
+          <p class="explica" style="padding:0">
+            Puedes aprobar una salida distinta de la propuesta: la tuya es la que queda.
+          </p>` : ''}
+        ${l.momento === 'por_aprobar' && !puedeAprobar
+          ? '<p class="explica" style="padding:0">Esperando la aprobación del Administrador.</p>' : ''}
       </div>
     </article>`;
 
-  const seccion = (titulo, clave, lista, vacio) => `
+  const tarjetaRecepcion = (r) => `
+    <article class="lote" data-recepcion-pendiente="${r.id}">
+      <header>
+        <b>Remisión ${esc(r.remision)}</b>
+        <span class="etiqueta">${esc(r.proveedor)}</span>
+        ${r.rechazados ? `<span class="etiqueta roja">${r.rechazados} rechazado(s)</span>` : '<span class="etiqueta verde">Todo aprobado</span>'}
+      </header>
+      <div class="cuerpo">
+        <p class="meta">Llegó ${fechaCorta(r.fecha_llegada)} · ${r.lotes} lote(s) · capturó ${esc(r.capturo)}
+          · cerrada por ${esc(r.cerro || r.capturo)} el ${new Date(r.cerrado_en).toLocaleString('es-MX')}</p>
+        <div class="fila-botones">
+          <button class="btn" data-ver-recepcion="${r.id}">Ver el muestreo</button>
+          ${puedeAprobar ? `
+            <button class="btn primario" data-aprobar-recepcion="${r.id}">Dar visto bueno</button>
+            <button class="btn peligro" data-reabrir-recepcion="${r.id}">Reabrir</button>` : ''}
+        </div>
+        ${puedeAprobar ? '' : '<p class="explica" style="padding:0">Esperando el visto bueno del Administrador.</p>'}
+      </div>
+    </article>`;
+
+  const seccion = (titulo, color, lista, vacio, pintar) => `
     <section class="panel">
-      <h2>${titulo} ${lista.length ? `<span class="etiqueta ${clave === 'resueltos' ? 'verde' : 'roja'}">${lista.length}</span>` : ''}</h2>
+      <h2>${titulo} ${lista.length ? `<span class="etiqueta ${color}">${lista.length}</span>` : ''}</h2>
       <div style="padding:18px">
-        ${lista.length ? lista.map((l) => tarjetaLote(l, clave)).join('') : `<div class="vacio">${vacio}</div>`}
+        ${lista.length ? lista.map(pintar).join('') : `<div class="vacio">${vacio}</div>`}
       </div>
     </section>`;
 
   vista.innerHTML = `
     <div class="migaja">
       <button data-ir-menu>← Menú</button><span>/</span>
-      <button data-ir-calidad>Calidad</button><span>/</span><span>Rechazados</span>
+      <button data-ir-calidad>Calidad</button><span>/</span><span>Aprobaciones</span>
     </div>
     <div id="mensajes"></div>
     <p class="explica" style="padding:0 0 16px">
-      Un lote rechazado lo resuelve quien tenga ese permiso y lo confirma otra persona.
-      Quien decide no confirma su propia decisión.
+      El Team Leader propone qué hacer con un lote rechazado y el Administrador aprueba.
+      Al aprobar puede elegir otra salida: la última palabra es suya.
     </p>
-    ${seccion('Sin resolver', 'sin_resolver', datos.sin_resolver, 'Nada pendiente por decidir.')}
-    ${seccion('Por confirmar', 'por_confirmar', datos.por_confirmar, 'Nada esperando confirmación.')}
-    ${seccion('Cerrados', 'resueltos', datos.resueltos, 'Todavía no se ha cerrado ningún rechazo.')}`;
+    ${seccion('Recepciones sin visto bueno', 'ambar', datos.recepciones,
+      'Todas las recepciones cerradas tienen visto bueno.', tarjetaRecepcion)}
+    ${seccion('Rechazos por proponer', 'roja', datos.por_proponer,
+      'Nada esperando propuesta.', tarjetaLote)}
+    ${seccion('Rechazos por aprobar', 'ambar', datos.por_aprobar,
+      'Nada esperando tu aprobación.', tarjetaLote)}
+    ${seccion('Rechazos cerrados', 'verde', datos.cerrados,
+      'Todavía no se ha cerrado ningún rechazo.', tarjetaLote)}`;
 
   vista.querySelector('[data-ir-menu]').addEventListener('click', () => { location.hash = '#/menu'; });
   vista.querySelector('[data-ir-calidad]').addEventListener('click', () => { location.hash = '#/calidad'; });
   cargarImagenesPendientes();
 
-  vista.querySelectorAll('[data-guardar-disposicion]').forEach((b) => {
-    b.addEventListener('click', async () => {
-      const id = b.dataset.guardarDisposicion;
-      const disposicion = vista.querySelector(`[data-disposicion="${id}"]`).value;
-      if (!disposicion) return mostrarMensaje('Elige qué se hace con el lote.', 'error');
-      try {
-        await api('POST', `/api/calidad/lotes/${id}/disposicion`, {
-          disposicion,
-          nota: vista.querySelector(`[data-nota="${id}"]`).value,
-        });
-        vistaCalidadPendientes();
-      } catch (err) { mostrarMensaje(err.message, 'error'); }
+  const dato = (attr, id) => {
+    const campo = vista.querySelector(`[data-${attr}="${id}"]`);
+    return campo ? campo.value.trim() : '';
+  };
+
+  // Cada acción es la misma mecánica: pedir, avisar si falla y repintar. Se
+  // repinta entero en vez de parchar la tarjeta porque una aprobación mueve el
+  // lote de una sección a otra.
+  const accion = (attr, construir) => {
+    vista.querySelectorAll(`[data-${attr}]`).forEach((boton) => {
+      boton.addEventListener('click', async () => {
+        const id = boton.dataset[attr.replace(/-(\w)/g, (_, c) => c.toUpperCase())];
+        const peticion = construir(id, boton);
+        if (!peticion) return;
+        boton.disabled = true;
+        try {
+          await api('POST', peticion.ruta, peticion.cuerpo);
+          vistaCalidadPendientes();
+        } catch (err) {
+          mostrarMensaje(err.message, 'error');
+          boton.disabled = false;
+        }
+      });
     });
+  };
+
+  accion('proponer', (id) => {
+    const disposicion = dato('disposicion', id);
+    if (!disposicion) { mostrarMensaje('Elige qué propones hacer con el lote.', 'error'); return null; }
+    return { ruta: `/api/calidad/lotes/${id}/propuesta`, cuerpo: { disposicion, nota: dato('nota', id) } };
   });
 
-  vista.querySelectorAll('[data-confirmar]').forEach((b) => {
-    b.addEventListener('click', async () => {
-      try {
-        await api('POST', `/api/calidad/lotes/${b.dataset.confirmar}/confirmar`);
-        vistaCalidadPendientes();
-      } catch (err) { mostrarMensaje(err.message, 'error'); }
-    });
+  accion('aprobar-lote', (id) => {
+    const disposicion = dato('disposicion', id);
+    if (!disposicion) { mostrarMensaje('Elige con qué salida lo apruebas.', 'error'); return null; }
+    return { ruta: `/api/calidad/lotes/${id}/aprobar`, cuerpo: { disposicion, nota: dato('nota', id) } };
+  });
+
+  accion('devolver', (id) => {
+    const motivo = prompt('¿Por qué devuelves la propuesta? Queda registrado.');
+    if (!motivo || !motivo.trim()) return null;
+    return { ruta: `/api/calidad/lotes/${id}/devolver`, cuerpo: { motivo } };
+  });
+
+  accion('reabrir-lote', (id) => {
+    const motivo = prompt('¿Por qué reabres este lote ya cerrado? Queda registrado.');
+    if (!motivo || !motivo.trim()) return null;
+    return { ruta: `/api/calidad/lotes/${id}/reabrir`, cuerpo: { motivo } };
+  });
+
+  accion('aprobar-recepcion', (id) => ({ ruta: `/api/calidad/recepciones/${id}/aprobar` }));
+
+  accion('reabrir-recepcion', (id) => {
+    const motivo = prompt('Reabrir la devuelve a captura para poder corregirla. ¿Por qué? Queda registrado.');
+    if (!motivo || !motivo.trim()) return null;
+    return { ruta: `/api/calidad/recepciones/${id}/reabrir`, cuerpo: { motivo } };
+  });
+
+  vista.querySelectorAll('[data-ver-recepcion]').forEach((b) => {
+    b.addEventListener('click', () => { location.hash = `#/recepcion/${b.dataset.verRecepcion}`; });
   });
 }
 

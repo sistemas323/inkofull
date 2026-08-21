@@ -576,32 +576,63 @@ levantarla aparece en cuanto se marca el primer Rechazado.
 > exigirla siempre, es quitar la condición `hayRechazo(recepcion) &&` en la ruta de
 > cierre, en `server.js`.
 
-### El lote rechazado no desaparece al cerrar
+### La última aprobación es del Administrador
 
-Pasa a **Calidad → Rechazados**, y ahí vive hasta que se resuelva. Tiene tres
-momentos:
+Nada de Calidad queda cerrado de verdad hasta que el Administrador lo aprueba. Todo
+lo que lo espera vive en un solo lugar: **Calidad → Aprobaciones**.
 
-| Estado | Qué falta |
-|---|---|
-| **Sin resolver** | Nadie ha dicho qué se hace con el material |
-| **Por confirmar** | Ya se decidió, falta que otra persona lo respalde |
-| **Cerrado** | Decidido y confirmado, con los dos nombres registrados |
+**Una recepción cerrada no está terminada.** Cerrarla es trabajo de almacén y quiere
+decir *«terminé de capturar»*; queda marcada como **Sin visto bueno** hasta que el
+Administrador entra y la da por buena. No frena a nadie: el equipo puede seguir
+capturando las que lleguen.
 
-**Quién decide.** Solo quien tenga el permiso *Resolver lotes rechazados* — hoy, el
-Administrador. Elige entre cuatro salidas y puede dejar una nota:
+**Un lote rechazado pasa por tres momentos:**
+
+| Momento | Qué falta | Quién |
+|---|---|---|
+| **Por proponer** | Nadie ha dicho qué se hace con el material | Un Team Leader |
+| **Por aprobar** | Ya hay propuesta, falta la última palabra | El Administrador |
+| **Cerrado** | Aprobado, con los dos nombres registrados | — |
+
+**El Team Leader propone**, porque es quien está cerca del material y del proveedor.
+Elige entre cuatro salidas y puede dejar una nota:
 
 - Devuelto al proveedor
 - Aceptado con concesión
 - Reclamo / nota de crédito
 - Reproceso o selección
 
-**Quién confirma.** Un Team Leader o el Administrador — **pero nunca la misma persona
-que decidió**. La plataforma lo rechaza. Eso es lo que hace que sea un acuerdo de dos
-y no el trámite de uno solo; sin esa regla, el Administrador podría decidir y
-confirmar en el mismo toque y la segunda firma no significaría nada.
+**El Administrador aprueba, y al aprobar puede cambiar la salida.** Si el Team Leader
+propuso *aceptado con concesión* y el Administrador prefiere *devuelto al proveedor*,
+aprueba eso: lo suyo es lo que queda. La propuesta original **no se borra** — el lote
+muestra las dos cosas y avisa que se aprobó algo distinto, para que se vea de dónde
+vino el cambio de criterio.
 
-El aviso de la portada de Calidad cuenta los rechazos que siguen abiertos, para que
-no se queden olvidados.
+También puede **devolver la propuesta** en vez de aprobarla, escribiendo por qué. El
+lote vuelve a quedar esperando que alguien proponga otra cosa.
+
+> **Quien propone no aprueba.** El Administrador no tiene el permiso de proponer, a
+> propósito: si tuviera los dos podría proponer y aprobarse a sí mismo, y la cadena
+> de dos personas dejaría de existir sin que se notara. La plataforma además lo
+> rechaza en el servidor, por si algún día alguien reparte los permisos de otra forma.
+
+### Reabrir lo ya cerrado
+
+El Administrador puede deshacer cualquier cosa cerrada. Es lo que hace que la última
+palabra sea de verdad suya y no solo un visto bueno de trámite:
+
+- **Reabrir una recepción** la devuelve a captura para corregir un dato mal escrito.
+  Antes, en papel, eso significaba hacer otra hoja del mismo camión.
+- **Reabrir un lote cerrado** deshace su aprobación y lo deja otra vez esperando
+  decisión, con la propuesta original intacta.
+
+**Siempre pide un motivo escrito, y queda registrado** con el nombre y la fecha. Sin
+eso, cerrar una recepción no significaría nada: cualquiera podría deshacerlo en
+silencio. El historial de reaperturas se muestra en la propia recepción.
+
+> Reabrir una recepción **no deshace** las decisiones ya aprobadas de sus lotes. Esas
+> se tomaron entre dos personas y no se caen de rebote al corregir una fecha; si hay
+> que deshacer una, se reabre ese lote en particular.
 
 ### El catálogo, en Configuración
 
@@ -620,11 +651,16 @@ mostrando. Lo mismo con los proveedores y los colores.
 
 ### Quién entra a Calidad
 
-| Perfil | Captura | Firma la autorización | Decide el destino | Reportes |
-|---|:---:|:---:|:---:|:---:|
-| Operador | — | — | — | — |
-| **Team Leader** | **sí** | **sí** | — | **sí** |
-| **Administrador** | **sí** | **sí** | **sí** | **sí** |
+| Perfil | Captura | Firma la autorización | Propone qué hacer | Aprueba y reabre | Reportes |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Operador | — | — | — | — | — |
+| **Team Leader** | **sí** | **sí** | **sí** | — | **sí** |
+| **Administrador** | **sí** | **sí** | — | **sí** | **sí** |
+
+**«Aprobación final» no se puede otorgar a nadie más.** No es una casilla que se
+pueda marcar en la matriz de permisos: va atada al perfil de Administrador y la
+plataforma rechaza cualquier intento de darla suelta. Otorgarla sería, justamente,
+dejar de ser la última aprobación.
 
 Los Team Leaders traen Calidad incluida porque alguien tiene que poder firmar la
 autorización de un rechazo. **A un operador se le da desde Configuración → Permisos**:

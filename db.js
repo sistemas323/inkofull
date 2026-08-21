@@ -393,12 +393,16 @@ CREATE TABLE IF NOT EXISTS recepciones (
   proveedor     TEXT    NOT NULL,
   fecha_llegada TEXT    NOT NULL,
   usuario_id    INTEGER NOT NULL REFERENCES usuarios(id),
-  -- borrador | cerrado
+  -- borrador | cerrado | aprobado
   estado        TEXT    NOT NULL DEFAULT 'borrador',
   notas         TEXT,
   creado_en     TEXT    NOT NULL,
   cerrado_en    TEXT,
   cerrado_por   INTEGER REFERENCES usuarios(id),
+  -- Visto bueno del Administrador. Cerrar una recepción es trabajo de almacén;
+  -- darla por buena es la última aprobación, y esa siempre es del Administrador.
+  aprobado_por  INTEGER REFERENCES usuarios(id),
+  aprobado_en   TEXT,
   UNIQUE (proveedor, remision)
 );
 
@@ -421,15 +425,19 @@ CREATE TABLE IF NOT EXISTS lotes (
   nitida        TEXT,
   resultado     TEXT,
   observacion   TEXT,
-  -- Seguimiento del lote rechazado. La disposición la registra quien tenga
-  -- 'calidad_resolver' y no surte efecto hasta que otra persona la confirma:
-  -- decidir qué pasa con material rechazado no debe quedar en una sola mano.
+  -- Seguimiento del lote rechazado, en dos tiempos. El Team Leader, que está
+  -- cerca del material, PROPONE qué debería hacerse; el Administrador APRUEBA, y
+  -- al aprobar puede cambiar la salida: la última palabra es suya, no un visto
+  -- bueno de trámite. Lo aprobado queda en 'disposicion', que es la decisión
+  -- firme; la propuesta se conserva aunque el Administrador decida otra cosa.
+  propuesta        TEXT,
+  propuesta_nota   TEXT,
+  propuesto_por    INTEGER REFERENCES usuarios(id),
+  propuesto_en     TEXT,
   disposicion      TEXT,
   disposicion_nota TEXT,
-  dispuesto_por    INTEGER REFERENCES usuarios(id),
-  dispuesto_en     TEXT,
-  confirmado_por   INTEGER REFERENCES usuarios(id),
-  confirmado_en    TEXT,
+  aprobado_por     INTEGER REFERENCES usuarios(id),
+  aprobado_en      TEXT,
   orden         INTEGER NOT NULL DEFAULT 0
 );
 
@@ -457,10 +465,53 @@ CREATE TABLE IF NOT EXISTS fotos_calidad (
   subida_en    TEXT    NOT NULL
 );
 
+-- Lo que el Administrador deshace. Reabrir algo ya cerrado es su privilegio,
+-- pero no puede ser invisible: sin registro de quién y por qué, el cierre de una
+-- recepción dejaría de significar nada.
+CREATE TABLE IF NOT EXISTS reversiones_calidad (
+  id            INTEGER PRIMARY KEY,
+  tipo          TEXT    NOT NULL,
+  referencia_id INTEGER NOT NULL,
+  motivo        TEXT    NOT NULL,
+  usuario_id    INTEGER REFERENCES usuarios(id),
+  ocurrido_en   TEXT    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_lotes_recepcion ON lotes (recepcion_id);
 CREATE INDEX IF NOT EXISTS idx_lotes_resultado ON lotes (resultado);
 CREATE INDEX IF NOT EXISTS idx_recepciones_fecha ON recepciones (fecha_llegada);
 CREATE INDEX IF NOT EXISTS idx_fotos_calidad_lote ON fotos_calidad (lote_id);
 `);
+
+// La primera versión de Calidad cerraba el rechazo al revés: el Administrador
+// registraba la disposición y un Team Leader la confirmaba, con lo que la última
+// palabra quedaba en el Team Leader. Ahora el Team Leader propone y el
+// Administrador aprueba. Los nombres de columna se acomodan a eso.
+function renombrarColumna(tabla, viejo, nuevo) {
+  const columnas = db.prepare(`PRAGMA table_info(${tabla})`).all().map((c) => c.name);
+  if (!columnas.includes(viejo) || columnas.includes(nuevo)) return;
+  db.exec(`ALTER TABLE ${tabla} RENAME COLUMN ${viejo} TO ${nuevo}`);
+}
+
+renombrarColumna('lotes', 'dispuesto_por', 'propuesto_por');
+renombrarColumna('lotes', 'dispuesto_en', 'propuesto_en');
+renombrarColumna('lotes', 'confirmado_por', 'aprobado_por');
+renombrarColumna('lotes', 'confirmado_en', 'aprobado_en');
+
+agregarColumna('lotes', 'propuesta', 'TEXT');
+agregarColumna('lotes', 'propuesta_nota', 'TEXT');
+
+// Los lotes decididos con el flujo anterior traen una disposición registrada sin
+// haber pasado por una propuesta. Se reinterpretan: lo que se había registrado
+// pasa a ser la propuesta, y solo sigue contando como decisión firme lo que
+// además ya estaba confirmado. Así nada queda aprobado por una sola persona.
+db.exec(`
+  UPDATE lotes SET propuesta = disposicion, propuesta_nota = disposicion_nota
+   WHERE disposicion IS NOT NULL AND propuesta IS NULL;
+  UPDATE lotes SET disposicion = NULL, disposicion_nota = NULL
+   WHERE aprobado_en IS NULL AND disposicion IS NOT NULL;
+`);
+agregarColumna('recepciones', 'aprobado_por', 'INTEGER REFERENCES usuarios(id)');
+agregarColumna('recepciones', 'aprobado_en', 'TEXT');
 
 module.exports = { db, DATA_DIR, FOTOS_DIR };

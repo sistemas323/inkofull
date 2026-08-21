@@ -37,6 +37,7 @@ const PERMISOS = {
     reportes: true,
     calidad_capturar: true,
     calidad_autorizar: true,
+    calidad_proponer: true,
     calidad_reportes: true,
   },
   admin: {
@@ -56,8 +57,10 @@ const PERMISOS = {
     configuracion: true,
     calidad_capturar: true,
     calidad_autorizar: true,
-    calidad_resolver: true,
     calidad_reportes: true,
+    // El Administrador aprueba, no propone. Si tuviera las dos cosas podría
+    // proponer y aprobarse a sí mismo, y la cadena de dos personas se caería.
+    calidad_aprobar: true,
   },
 };
 
@@ -91,14 +94,22 @@ const CATALOGO_PERMISOS = [
     ayuda: 'Funciones del módulo de Calidad.',
     permisos: [
       { clave: 'calidad_capturar', etiqueta: 'Capturar muestreos' },
-      { clave: 'calidad_autorizar', etiqueta: 'Firmar y confirmar rechazos' },
-      { clave: 'calidad_resolver', etiqueta: 'Resolver lotes rechazados' },
+      { clave: 'calidad_autorizar', etiqueta: 'Firmar la autorización de un rechazo' },
+      { clave: 'calidad_proponer', etiqueta: 'Proponer qué hacer con un rechazo' },
+      { clave: 'calidad_aprobar', etiqueta: 'Aprobación final', solo_admin: true },
       { clave: 'calidad_reportes', etiqueta: 'Reportes de Calidad' },
     ],
   },
 ];
 
 const PERMISOS_VALIDOS = new Set(CATALOGO_PERMISOS.flatMap((g) => g.permisos.map((p) => p.clave)));
+
+// Permisos que no se pueden otorgar a mano: van atados al perfil de
+// Administrador y punto. La aprobación final de Calidad está aquí porque
+// otorgarla a alguien más sería, justamente, dejar de ser la última aprobación.
+const SOLO_ADMIN = new Set(
+  CATALOGO_PERMISOS.flatMap((g) => g.permisos.filter((p) => p.solo_admin).map((p) => p.clave))
+);
 
 const ETIQUETA_DE_PERMISO = Object.fromEntries(
   CATALOGO_PERMISOS.flatMap((g) => g.permisos.map((p) => [p.clave, p.etiqueta]))
@@ -108,7 +119,7 @@ const ETIQUETA_DE_PERMISO = Object.fromEntries(
 // un permiso individual.
 const PERMISOS_SENSIBLES = [
   'reportes', 'comparativa', 'configuracion', 'mod_configuracion',
-  'calidad_reportes', 'calidad_resolver',
+  'calidad_reportes', 'calidad_aprobar',
 ];
 
 // Se permiten letras además de dígitos: el equipo usa claves con significado
@@ -1254,10 +1265,11 @@ const FIRMAS_CALIDAD = {
 
 function recepcionCompleta(id) {
   const recepcion = db.prepare(`
-    SELECT r.*, u.nombre AS capturo, c.nombre AS cerro
+    SELECT r.*, u.nombre AS capturo, c.nombre AS cerro, a.nombre AS aprobo
     FROM recepciones r
     JOIN usuarios u ON u.id = r.usuario_id
     LEFT JOIN usuarios c ON c.id = r.cerrado_por
+    LEFT JOIN usuarios a ON a.id = r.aprobado_por
     WHERE r.id = ?
   `).get(id);
   if (!recepcion) return null;
@@ -1265,14 +1277,19 @@ function recepcionCompleta(id) {
   recepcion.lotes = db.prepare(`
     SELECT l.*, m.modelo, m.color_impresion, m.marca_termino, m.tipo_centro,
            m.gap, m.cant_x_rollo, m.diam_referencia, m.centro_referencia,
-           d.nombre AS dispuso, f.nombre AS confirmo
+           d.nombre AS propuso, f.nombre AS aprobo
     FROM lotes l
     JOIN materiales m ON m.id = l.material_id
-    LEFT JOIN usuarios d ON d.id = l.dispuesto_por
-    LEFT JOIN usuarios f ON f.id = l.confirmado_por
+    LEFT JOIN usuarios d ON d.id = l.propuesto_por
+    LEFT JOIN usuarios f ON f.id = l.aprobado_por
     WHERE l.recepcion_id = ? ORDER BY l.orden, l.id
-  `).all(id).map((l) => ({ ...l, disposicion_etiqueta: l.disposicion ? ETIQUETA_DISPOSICION[l.disposicion] : null }));
+  `).all(id).map((l) => ({
+    ...l,
+    etiqueta_propuesta: l.propuesta ? ETIQUETA_DISPOSICION[l.propuesta] : null,
+    etiqueta_disposicion: l.disposicion ? ETIQUETA_DISPOSICION[l.disposicion] : null,
+  }));
 
+  recepcion.reversiones = historialDe('recepcion_reabierta', id);
   recepcion.firmas = db
     .prepare('SELECT rol, nombre, imagen, firmado_en FROM firmas_calidad WHERE recepcion_id = ?')
     .all(id);
@@ -1313,7 +1330,7 @@ const hayRechazo = (recepcion) => recepcion.lotes.some((l) => l.resultado === 'r
 function recepcionAbierta(res, id) {
   const recepcion = db.prepare('SELECT * FROM recepciones WHERE id = ?').get(id);
   if (!recepcion) { json(res, 404, { error: 'Recepción no encontrada' }); return null; }
-  if (recepcion.estado === 'cerrado') { json(res, 409, { error: 'Esta recepción ya fue cerrada.' }); return null; }
+  if (recepcion.estado !== 'borrador') { json(res, 409, { error: 'Esta recepción ya fue cerrada.' }); return null; }
   return recepcion;
 }
 
@@ -1349,12 +1366,14 @@ ruta('GET', '/api/calidad/recepciones', (req, res) => {
       ORDER BY r.estado = 'cerrado', r.fecha_llegada DESC, r.id DESC
       LIMIT 60
     `).all(),
-    // Cuántos rechazos siguen sin resolverse. Va aquí para que el aviso aparezca
-    // en la portada del módulo sin pedir la lista completa.
+    // Lo que espera al Administrador: recepciones sin visto bueno y rechazos sin
+    // aprobar. Va aquí para que el aviso salga en la portada del módulo sin
+    // pedir la lista completa.
     pendientes: db.prepare(`
-      SELECT COUNT(*) AS n FROM lotes l
-      JOIN recepciones r ON r.id = l.recepcion_id
-      WHERE l.resultado = 'rechazado' AND r.estado = 'cerrado' AND l.confirmado_en IS NULL
+      SELECT (SELECT COUNT(*) FROM recepciones WHERE estado = 'cerrado')
+           + (SELECT COUNT(*) FROM lotes l
+              JOIN recepciones r ON r.id = l.recepcion_id
+              WHERE l.resultado = 'rechazado' AND r.estado <> 'borrador' AND l.aprobado_en IS NULL) AS n
     `).get().n,
   });
 });
@@ -1430,7 +1449,7 @@ ruta('PUT', '/api/calidad/lotes/(\\d+)', (req, res, p, cuerpo) => {
 
   const lote = db.prepare('SELECT l.*, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
   if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
-  if (lote.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+  if (lote.estado !== 'borrador') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
 
   if (cuerpo.medida_centro && !MEDIDAS_CENTRO.includes(cuerpo.medida_centro)) {
     return json(res, 400, { error: 'Medida de centro desconocida' });
@@ -1459,6 +1478,15 @@ ruta('PUT', '/api/calidad/lotes/(\\d+)', (req, res, p, cuerpo) => {
   valores.total_lote = total > 0 ? total : null;
   valores.muestra = tamanoMuestra(total);
 
+  if (valores.resultado !== 'rechazado' && lote.resultado === 'rechazado') {
+    db.prepare(`
+      UPDATE lotes SET propuesta = NULL, propuesta_nota = NULL, propuesto_por = NULL,
+                       propuesto_en = NULL, disposicion = NULL, disposicion_nota = NULL,
+                       aprobado_por = NULL, aprobado_en = NULL
+      WHERE id = ?
+    `).run(lote.id);
+  }
+
   db.prepare(`
     UPDATE lotes SET fondo = ?, cant_cajas = ?, rollos_x_caja = ?, cant_rollos = ?,
                      total_lote = ?, muestra = ?, diametro = ?, medida_centro = ?,
@@ -1476,7 +1504,7 @@ ruta('DELETE', '/api/calidad/lotes/(\\d+)', (req, res, p) => {
   if (!exigir(req, res, 'calidad_capturar')) return;
   const lote = db.prepare('SELECT l.id, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
   if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
-  if (lote.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+  if (lote.estado !== 'borrador') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
 
   for (const f of db.prepare('SELECT archivo FROM fotos_calidad WHERE lote_id = ?').all(lote.id)) {
     fs.rm(path.join(FOTOS_DIR, f.archivo), { force: true }, () => {});
@@ -1519,7 +1547,7 @@ ruta('POST', '/api/calidad/lotes/(\\d+)/fotos', (req, res, p, cuerpo) => {
 
   const lote = db.prepare('SELECT l.id, l.recepcion_id, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
   if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
-  if (lote.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+  if (lote.estado !== 'borrador') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
 
   const guardado = guardarArchivoSubido(cuerpo.imagen);
   if (guardado.error) return json(res, guardado.codigo, { error: guardado.error });
@@ -1539,7 +1567,7 @@ ruta('DELETE', '/api/calidad/fotos/(\\d+)', (req, res, p) => {
     JOIN recepciones r ON r.id = f.recepcion_id WHERE f.id = ?
   `).get(Number(p[1]));
   if (!foto) return json(res, 404, { error: 'Foto no encontrada' });
-  if (foto.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+  if (foto.estado !== 'borrador') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
 
   db.prepare('DELETE FROM fotos_calidad WHERE id = ?').run(foto.id);
   fs.rm(path.join(FOTOS_DIR, foto.archivo), { force: true }, () => {});
@@ -1553,7 +1581,7 @@ ruta('POST', '/api/calidad/recepciones/(\\d+)/cerrar', (req, res, p) => {
 
   const recepcion = recepcionCompleta(id);
   if (!recepcion) return json(res, 404, { error: 'Recepción no encontrada' });
-  if (recepcion.estado === 'cerrado') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
+  if (recepcion.estado !== 'borrador') return json(res, 409, { error: 'Esta recepción ya fue cerrada.' });
 
   const faltas = faltantesDeRecepcion(recepcion);
   if (faltas.length) return json(res, 400, { error: faltas.join(' ') });
@@ -1573,73 +1601,214 @@ ruta('POST', '/api/calidad/recepciones/(\\d+)/cerrar', (req, res, p) => {
   json(res, 200, { ok: true, estado: 'cerrado' });
 });
 
-// --- lotes rechazados: qué se hizo con ellos ---
+// --- lo que espera al Administrador ---
 
-ruta('GET', '/api/calidad/pendientes', (req, res) => {
-  if (!exigir(req, res, 'mod_calidad')) return;
-  const filas = db.prepare(`
+// Un lote rechazado pasa por tres momentos: alguien cercano al material PROPONE
+// qué hacer con él, el Administrador APRUEBA —pudiendo cambiar la salida— y con
+// eso queda cerrado. La última palabra es siempre del Administrador.
+const momentoDelLote = (l) => (l.aprobado_en ? 'cerrado' : l.propuesta ? 'por_aprobar' : 'por_proponer');
+
+function lotesRechazados() {
+  return db.prepare(`
     SELECT l.id, l.fondo, l.total_lote, l.muestra, l.observacion,
-           l.disposicion, l.disposicion_nota, l.dispuesto_en, l.confirmado_en,
+           l.propuesta, l.propuesta_nota, l.propuesto_en,
+           l.disposicion, l.disposicion_nota, l.aprobado_en,
            m.modelo, r.id AS recepcion_id, r.remision, r.proveedor, r.fecha_llegada,
-           d.nombre AS dispuso, c.nombre AS confirmo
+           pr.nombre AS propuso, ap.nombre AS aprobo
     FROM lotes l
     JOIN recepciones r ON r.id = l.recepcion_id
     JOIN materiales m ON m.id = l.material_id
-    LEFT JOIN usuarios d ON d.id = l.dispuesto_por
-    LEFT JOIN usuarios c ON c.id = l.confirmado_por
-    WHERE l.resultado = 'rechazado' AND r.estado = 'cerrado'
-    ORDER BY l.confirmado_en IS NOT NULL, r.fecha_llegada DESC, l.id DESC
+    LEFT JOIN usuarios pr ON pr.id = l.propuesto_por
+    LEFT JOIN usuarios ap ON ap.id = l.aprobado_por
+    WHERE l.resultado = 'rechazado' AND r.estado <> 'borrador'
+    ORDER BY l.aprobado_en IS NOT NULL, r.fecha_llegada DESC, l.id DESC
     LIMIT 200
   `).all().map((f) => ({
     ...f,
+    momento: momentoDelLote(f),
+    etiqueta_propuesta: f.propuesta ? ETIQUETA_DISPOSICION[f.propuesta] : null,
     etiqueta_disposicion: f.disposicion ? ETIQUETA_DISPOSICION[f.disposicion] : null,
     fotos: db.prepare('SELECT id, archivo FROM fotos_calidad WHERE lote_id = ?').all(f.id),
   }));
+}
+
+const historialDe = (tipo, id) => db.prepare(`
+  SELECT v.motivo, v.ocurrido_en, u.nombre FROM reversiones_calidad v
+  LEFT JOIN usuarios u ON u.id = v.usuario_id
+  WHERE v.tipo = ? AND v.referencia_id = ? ORDER BY v.id DESC
+`).all(tipo, id);
+
+const anotarReversion = db.prepare(`
+  INSERT INTO reversiones_calidad (tipo, referencia_id, motivo, usuario_id, ocurrido_en)
+  VALUES (?, ?, ?, ?, ?)
+`);
+
+ruta('GET', '/api/calidad/pendientes', (req, res) => {
+  if (!exigir(req, res, 'mod_calidad')) return;
+  const lotes = lotesRechazados();
 
   json(res, 200, {
     disposiciones: DISPOSICIONES,
-    sin_resolver: filas.filter((f) => !f.disposicion),
-    por_confirmar: filas.filter((f) => f.disposicion && !f.confirmado_en),
-    resueltos: filas.filter((f) => f.confirmado_en),
+    // Recepciones cerradas por almacén que todavía esperan el visto bueno.
+    recepciones: db.prepare(`
+      SELECT r.id, r.remision, r.proveedor, r.fecha_llegada, r.cerrado_en,
+             u.nombre AS capturo, c.nombre AS cerro,
+             (SELECT COUNT(*) FROM lotes l WHERE l.recepcion_id = r.id) AS lotes,
+             (SELECT COUNT(*) FROM lotes l WHERE l.recepcion_id = r.id AND l.resultado = 'rechazado') AS rechazados
+      FROM recepciones r
+      JOIN usuarios u ON u.id = r.usuario_id
+      LEFT JOIN usuarios c ON c.id = r.cerrado_por
+      WHERE r.estado = 'cerrado'
+      ORDER BY r.cerrado_en
+    `).all(),
+    por_proponer: lotes.filter((l) => l.momento === 'por_proponer'),
+    por_aprobar: lotes.filter((l) => l.momento === 'por_aprobar'),
+    cerrados: lotes.filter((l) => l.momento === 'cerrado'),
   });
 });
 
-ruta('POST', '/api/calidad/lotes/(\\d+)/disposicion', (req, res, p, cuerpo) => {
-  const usuario = exigir(req, res, 'calidad_resolver');
+// Trae el lote y comprueba que su recepción ya esté cerrada. Mientras siga en
+// captura no hay nada que proponer: los datos todavía pueden cambiar.
+function loteRechazadoCerrado(res, id) {
+  const lote = db.prepare(`
+    SELECT l.*, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?
+  `).get(id);
+  if (!lote) { json(res, 404, { error: 'Lote no encontrado' }); return null; }
+  if (lote.resultado !== 'rechazado') { json(res, 400, { error: 'Ese lote no fue rechazado.' }); return null; }
+  if (lote.estado === 'borrador') { json(res, 409, { error: 'La recepción todavía está en captura.' }); return null; }
+  return lote;
+}
+
+ruta('POST', '/api/calidad/lotes/(\\d+)/propuesta', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_proponer');
   if (!usuario) return;
 
-  const lote = db.prepare('SELECT l.*, r.estado FROM lotes l JOIN recepciones r ON r.id = l.recepcion_id WHERE l.id = ?').get(Number(p[1]));
-  if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
-  if (lote.resultado !== 'rechazado') return json(res, 400, { error: 'Ese lote no fue rechazado.' });
-  if (lote.estado !== 'cerrado') return json(res, 409, { error: 'La recepción todavía está abierta.' });
-  if (lote.confirmado_en) return json(res, 409, { error: 'Ese lote ya se cerró; su disposición no se cambia.' });
+  const lote = loteRechazadoCerrado(res, Number(p[1]));
+  if (!lote) return;
+  if (lote.aprobado_en) return json(res, 409, { error: 'Ese lote ya fue aprobado; su decisión no se cambia.' });
   if (!ETIQUETA_DISPOSICION[cuerpo.disposicion]) return json(res, 400, { error: 'Disposición desconocida' });
 
   db.prepare(`
-    UPDATE lotes SET disposicion = ?, disposicion_nota = ?, dispuesto_por = ?, dispuesto_en = ?
+    UPDATE lotes SET propuesta = ?, propuesta_nota = ?, propuesto_por = ?, propuesto_en = ?
     WHERE id = ?
   `).run(cuerpo.disposicion, (cuerpo.nota || '').trim() || null, usuario.id, new Date().toISOString(), lote.id);
   json(res, 200, { ok: true });
 });
 
-ruta('POST', '/api/calidad/lotes/(\\d+)/confirmar', (req, res, p) => {
-  const usuario = exigir(req, res, 'calidad_autorizar');
+ruta('POST', '/api/calidad/lotes/(\\d+)/aprobar', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_aprobar');
+  if (!usuario) return;
+
+  const lote = loteRechazadoCerrado(res, Number(p[1]));
+  if (!lote) return;
+  if (!lote.propuesta) return json(res, 400, { error: 'Todavía nadie ha propuesto qué hacer con ese lote.' });
+  if (lote.aprobado_en) return json(res, 409, { error: 'Ese lote ya está cerrado.' });
+
+  // Quien propone no aprueba su propia propuesta. Con los perfiles de hoy no
+  // puede pasar —el Administrador no propone—, pero si algún día alguien tuviera
+  // los dos permisos, la cadena de dos personas dejaría de existir en silencio.
+  if (lote.propuesto_por === usuario.id) {
+    return json(res, 403, { error: 'La propuesta la aprueba otra persona, no quien la hizo.' });
+  }
+
+  // El Administrador puede aprobar otra salida distinta de la propuesta: es la
+  // última palabra, no un visto bueno de trámite. La propuesta original se
+  // conserva para que se vea que hubo un cambio de criterio y de quién vino.
+  const decision = cuerpo.disposicion || lote.propuesta;
+  if (!ETIQUETA_DISPOSICION[decision]) return json(res, 400, { error: 'Disposición desconocida' });
+
+  db.prepare(`
+    UPDATE lotes SET disposicion = ?, disposicion_nota = ?, aprobado_por = ?, aprobado_en = ?
+    WHERE id = ?
+  `).run(decision, (cuerpo.nota || '').trim() || null, usuario.id, new Date().toISOString(), lote.id);
+  json(res, 200, { ok: true, disposicion: decision, cambiada: decision !== lote.propuesta });
+});
+
+// El Administrador puede no estar de acuerdo y regresar la propuesta en vez de
+// aprobarla. El lote vuelve a quedar esperando que alguien proponga.
+ruta('POST', '/api/calidad/lotes/(\\d+)/devolver', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_aprobar');
+  if (!usuario) return;
+
+  const lote = loteRechazadoCerrado(res, Number(p[1]));
+  if (!lote) return;
+  if (!lote.propuesta) return json(res, 400, { error: 'No hay ninguna propuesta que devolver.' });
+  if (lote.aprobado_en) return json(res, 409, { error: 'Ese lote ya está cerrado.' });
+
+  const motivo = String(cuerpo.motivo || '').trim();
+  if (!motivo) return json(res, 400, { error: 'Escribe por qué la devuelves, para que sepan qué corregir.' });
+
+  db.prepare('UPDATE lotes SET propuesta = NULL, propuesta_nota = NULL, propuesto_por = NULL, propuesto_en = NULL WHERE id = ?')
+    .run(lote.id);
+  anotarReversion.run('propuesta_devuelta', lote.id, motivo, usuario.id, new Date().toISOString());
+  json(res, 200, { ok: true });
+});
+
+// El Administrador puede deshacer un lote ya cerrado. Vuelve a quedar esperando
+// aprobación, con la propuesta original intacta, para decidir otra cosa.
+ruta('POST', '/api/calidad/lotes/(\\d+)/reabrir', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_aprobar');
   if (!usuario) return;
 
   const lote = db.prepare('SELECT * FROM lotes WHERE id = ?').get(Number(p[1]));
   if (!lote) return json(res, 404, { error: 'Lote no encontrado' });
-  if (!lote.disposicion) return json(res, 400, { error: 'Todavía no se ha decidido qué hacer con ese lote.' });
-  if (lote.confirmado_en) return json(res, 409, { error: 'Ese lote ya está cerrado.' });
+  if (!lote.aprobado_en) return json(res, 409, { error: 'Ese lote todavía no estaba cerrado.' });
 
-  // Quien decide no confirma su propia decisión. Es lo que convierte esto en un
-  // acuerdo de dos y no en el trámite de una sola persona.
-  if (lote.dispuesto_por === usuario.id) {
-    return json(res, 403, { error: 'La disposición la confirma otra persona, no quien la registró.' });
-  }
+  const motivo = String(cuerpo.motivo || '').trim();
+  if (!motivo) return json(res, 400, { error: 'Escribe por qué lo reabres. Queda registrado.' });
 
-  db.prepare('UPDATE lotes SET confirmado_por = ?, confirmado_en = ? WHERE id = ?')
-    .run(usuario.id, new Date().toISOString(), lote.id);
+  db.prepare('UPDATE lotes SET disposicion = NULL, disposicion_nota = NULL, aprobado_por = NULL, aprobado_en = NULL WHERE id = ?')
+    .run(lote.id);
+  anotarReversion.run('lote_reabierto', lote.id, motivo, usuario.id, new Date().toISOString());
   json(res, 200, { ok: true });
+});
+
+// --- el visto bueno de la recepción completa ---
+
+// Cerrar una recepción es trabajo de almacén: quiere decir «terminé de
+// capturar». Darla por buena es otra cosa, y es del Administrador.
+ruta('POST', '/api/calidad/recepciones/(\\d+)/aprobar', (req, res, p) => {
+  const usuario = exigir(req, res, 'calidad_aprobar');
+  if (!usuario) return;
+
+  const recepcion = db.prepare('SELECT * FROM recepciones WHERE id = ?').get(Number(p[1]));
+  if (!recepcion) return json(res, 404, { error: 'Recepción no encontrada' });
+  if (recepcion.estado === 'borrador') return json(res, 409, { error: 'Esa recepción sigue en captura.' });
+  if (recepcion.estado === 'aprobado') return json(res, 409, { error: 'Esa recepción ya tiene tu visto bueno.' });
+
+  db.prepare("UPDATE recepciones SET estado = 'aprobado', aprobado_por = ?, aprobado_en = ? WHERE id = ?")
+    .run(usuario.id, new Date().toISOString(), recepcion.id);
+  json(res, 200, { ok: true, estado: 'aprobado' });
+});
+
+// Devuelve una recepción a captura, esté cerrada o ya aprobada. Es la manera de
+// corregir un dato mal capturado sin inventar un segundo registro del mismo
+// camión, que es justo lo que pasaba en papel: se hacía otra hoja.
+ruta('POST', '/api/calidad/recepciones/(\\d+)/reabrir', (req, res, p, cuerpo) => {
+  const usuario = exigir(req, res, 'calidad_aprobar');
+  if (!usuario) return;
+
+  const recepcion = db.prepare('SELECT * FROM recepciones WHERE id = ?').get(Number(p[1]));
+  if (!recepcion) return json(res, 404, { error: 'Recepción no encontrada' });
+  if (recepcion.estado === 'borrador') return json(res, 409, { error: 'Esa recepción ya está abierta.' });
+
+  const motivo = String(cuerpo.motivo || '').trim();
+  if (!motivo) return json(res, 400, { error: 'Escribe por qué la reabres. Queda registrado.' });
+
+  // Un lote cuyo destino ya se aprobó no se toca: esa decisión se tomó entre dos
+  // y no se deshace de rebote al corregir una fecha. Si hay que deshacerla,
+  // existe «reabrir» sobre ese lote en particular.
+  db.exec('BEGIN');
+  try {
+    db.prepare("UPDATE recepciones SET estado = 'borrador', cerrado_en = NULL, cerrado_por = NULL, aprobado_por = NULL, aprobado_en = NULL WHERE id = ?")
+      .run(recepcion.id);
+    anotarReversion.run('recepcion_reabierta', recepcion.id, motivo, usuario.id, new Date().toISOString());
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  json(res, 200, { ok: true, estado: 'borrador' });
 });
 
 // --- reportes de calidad ---
@@ -1650,7 +1819,7 @@ ruta('GET', '/api/calidad/reportes', (req, res) => {
 
   const lotes = db.prepare(`
     SELECT l.id, l.fondo, l.total_lote, l.muestra, l.diametro, l.medida_centro,
-           l.nitida, l.resultado, l.observacion, l.disposicion, l.confirmado_en,
+           l.nitida, l.resultado, l.observacion, l.disposicion, l.aprobado_en,
            m.modelo, m.diam_referencia, m.centro_referencia,
            r.id AS recepcion_id, r.remision, r.proveedor, r.fecha_llegada, r.estado
     FROM lotes l
@@ -1681,7 +1850,7 @@ ruta('GET', '/api/calidad/reportes', (req, res) => {
       rechazados: rechazados.length,
       rollos: revisados.reduce((n, l) => n + (l.total_lote || 0), 0),
       revisados: revisados.reduce((n, l) => n + (l.muestra || 0), 0),
-      sin_resolver: rechazados.filter((l) => !l.confirmado_en).length,
+      sin_resolver: rechazados.filter((l) => !l.aprobado_en).length,
     },
     proveedores: Object.values(porProveedor).sort((a, b) => b.rechazados - a.rechazados || b.lotes - a.lotes),
     etiquetas_disposicion: ETIQUETA_DISPOSICION,
@@ -1694,8 +1863,9 @@ ruta('GET', '/api/calidad/exportar.csv', (req, res) => {
   const filas = db.prepare(`
     SELECT r.fecha_llegada, r.remision, r.proveedor, r.estado, m.modelo, l.fondo,
            l.cant_cajas, l.rollos_x_caja, l.total_lote, l.muestra, l.diametro,
-           l.medida_centro, l.nitida, l.resultado, l.observacion, l.disposicion,
-           l.disposicion_nota, l.confirmado_en, u.nombre AS capturo
+           l.medida_centro, l.nitida, l.resultado, l.observacion,
+           l.propuesta, l.disposicion, l.disposicion_nota, l.aprobado_en,
+           u.nombre AS capturo
     FROM lotes l
     JOIN recepciones r ON r.id = l.recepcion_id
     JOIN materiales m ON m.id = l.material_id
@@ -1706,8 +1876,8 @@ ruta('GET', '/api/calidad/exportar.csv', (req, res) => {
   const encabezados = [
     'Fecha de llegada', 'Remisión', 'Proveedor', 'Estado', 'Modelo', 'Fondo',
     'Cajas', 'Rollos por caja', 'Total en lote', 'Cuántos revisar', 'Diámetro',
-    'Medida centro', '¿Nítida?', 'Resultado', 'Observación', 'Disposición',
-    'Nota de disposición', 'Confirmado', 'Capturó',
+    'Medida centro', '¿Nítida?', 'Resultado', 'Observación', 'Propuesta',
+    'Disposición aprobada', 'Nota de la aprobación', 'Aprobado', 'Capturó',
   ];
   const celda = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const csv = [encabezados.map(celda).join(',')]
@@ -1715,8 +1885,9 @@ ruta('GET', '/api/calidad/exportar.csv', (req, res) => {
       f.fecha_llegada, f.remision, f.proveedor, f.estado, f.modelo, f.fondo,
       f.cant_cajas, f.rollos_x_caja, f.total_lote, f.muestra, f.diametro,
       f.medida_centro, f.nitida, f.resultado, f.observacion,
+      f.propuesta ? ETIQUETA_DISPOSICION[f.propuesta] : '',
       f.disposicion ? ETIQUETA_DISPOSICION[f.disposicion] : '',
-      f.disposicion_nota, f.confirmado_en, f.capturo,
+      f.disposicion_nota, f.aprobado_en, f.capturo,
     ].map(celda).join(',')))
     .join('\r\n');
 
@@ -1800,7 +1971,9 @@ function normalizarExtras(ajustes) {
   }
   const limpio = {};
   for (const [clave, valor] of Object.entries(ajustes || {})) {
-    if (PERMISOS_VALIDOS.has(clave)) limpio[clave] = !!valor;
+    // Los permisos atados al perfil de Administrador se ignoran aquí: la ficha
+    // de una persona no es sitio para colarse uno.
+    if (PERMISOS_VALIDOS.has(clave) && !SOLO_ADMIN.has(clave)) limpio[clave] = !!valor;
   }
   return JSON.stringify(limpio);
 }
@@ -1937,6 +2110,13 @@ ruta('PUT', '/api/admin/permisos', (req, res, _p, cuerpo) => {
         error: `${persona.nombre} necesita un PIN antes de darle Reportes, Comparativa, Configuración o los reportes de Calidad.`,
       });
     }
+    const atado = [...SOLO_ADMIN].find((k) => persona.ajustes[k] && persona.rol !== 'admin');
+    if (atado) {
+      return json(res, 400, {
+        error: `«${ETIQUETA_DE_PERMISO[atado]}» va con el perfil de Administrador y no se otorga suelto. `
+          + `Si ${persona.nombre} debe tenerlo, cámbiale el perfil.`,
+      });
+    }
     if (persona.rol === 'admin' && persona.activo && !efectivos.configuracion) {
       const otros = db.prepare(`
         SELECT COUNT(*) AS n FROM usuarios WHERE rol = 'admin' AND activo = 1 AND id <> ?
@@ -1983,6 +2163,15 @@ ruta('PUT', '/api/admin/usuarios/(\\d+)/permiso', (req, res, p, cuerpo) => {
   else ajustes[cuerpo.clave] = !!cuerpo.valor;
 
   const efectivos = permisosDe(persona.rol, JSON.stringify(ajustes));
+
+  // Hay permisos que son del perfil de Administrador y no se prestan. La
+  // aprobación final de Calidad es uno: otorgarla a alguien más sería dejar de
+  // ser la última aprobación.
+  if (SOLO_ADMIN.has(cuerpo.clave) && ajustes[cuerpo.clave] && persona.rol !== 'admin') {
+    return json(res, 400, {
+      error: `«${ETIQUETA_DE_PERMISO[cuerpo.clave]}» va con el perfil de Administrador y no se otorga suelto.`,
+    });
+  }
 
   // Nadie puede quedarse sin ver nada: sin un solo módulo, esa persona entra y
   // se topa con un menú vacío.
