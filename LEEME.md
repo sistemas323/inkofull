@@ -107,6 +107,15 @@ ajustados para convivir con el navy sin competir con él.
    que empieza con `192.168`. En la tablet, agrégala a la pantalla de inicio para
    que se abra como una app.
 
+> **Arranca sola al encender la computadora.** Hay un acceso directo al `.bat` en
+> la carpeta de Inicio de Windows, así que no hay que acordarse de abrirlo. Para
+> quitarlo, borra «Sistema Digital INKO» de esa carpeta: pega
+> `shell:startup` en el explorador y ahí está.
+>
+> **Si la computadora se reinicia y nadie entra a Windows, la plataforma no
+> levanta**: el acceso directo corre al iniciar sesión, no antes. Con la sesión
+> abierta, la ventana negra reaparece sola.
+
 > Todos los equipos deben estar en la **misma red wifi**. Si la computadora cambia
 > de red, la dirección `192.168...` cambia; vuelve a leerla en la ventana negra.
 
