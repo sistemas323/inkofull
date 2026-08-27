@@ -54,4 +54,28 @@ function ultimasSemanas(n, desde = new Date()) {
   return lista;
 }
 
-module.exports = { semanaISO, hoyISO, periodoASemana, describirSemana, ultimasSemanas };
+// Días entre hoy y una fecha 'YYYY-MM-DD'. Positivo = le quedan; negativo = ya
+// venció. Se comparan días completos en hora local, no instantes: si vence hoy,
+// son 0 días, no «medio día» ni −1 por la hora a la que se consulte.
+function diasHasta(fechaISO, hoy = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fechaISO || ''))) return null;
+  const [anio, mes, dia] = fechaISO.split('-').map(Number);
+  const destino = Date.UTC(anio, mes - 1, dia);
+  const referencia = Date.UTC(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  return Math.round((destino - referencia) / 86400000);
+}
+
+// Traduce esos días a algo que se lee de un vistazo.
+function describirVigencia(fechaISO, hoy = new Date()) {
+  const dias = diasHasta(fechaISO, hoy);
+  if (dias === null) return { estado: 'sin_dato', dias: null, texto: 'Sin capturar' };
+  if (dias < 0) return { estado: 'vencida', dias, texto: `Vencida hace ${Math.abs(dias)} día${Math.abs(dias) === 1 ? '' : 's'}` };
+  if (dias === 0) return { estado: 'vence_hoy', dias, texto: 'Vence hoy' };
+  if (dias <= 30) return { estado: 'por_vencer', dias, texto: `Le quedan ${dias} día${dias === 1 ? '' : 's'}` };
+  return { estado: 'vigente', dias, texto: `Le quedan ${dias} días` };
+}
+
+module.exports = {
+  semanaISO, hoyISO, periodoASemana, describirSemana, ultimasSemanas,
+  diasHasta, describirVigencia,
+};

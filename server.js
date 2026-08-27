@@ -8,7 +8,8 @@ const os = require('node:os');
 
 const { db, FOTOS_DIR } = require('./db');
 const { sembrar } = require('./seed');
-const { semanaISO, hoyISO, periodoASemana, describirSemana, ultimasSemanas } = require('./fechas');
+const { semanaISO, hoyISO, periodoASemana, describirSemana, ultimasSemanas,
+        describirVigencia } = require('./fechas');
 
 // ------------------------------------------------------------------ permisos
 
@@ -265,6 +266,15 @@ const COLUMNAS = {
 
 function periodoActual(frecuencia) {
   return frecuencia === 'diario' ? hoyISO() : semanaISO();
+}
+
+const esViernesHoy = () => new Date().getDay() === 5;
+
+// Un checklist de viernes no se abre otro día. Estaba solo como bandera para
+// atenuar la tarjeta en pantalla, pero eso no impide nada a quien llame la API
+// directamente o llegue con una dirección guardada.
+function fueraDeSuDia(plantilla) {
+  return plantilla.frecuencia === 'viernes' && !esViernesHoy();
 }
 
 // Los ítems traen marcadores {psi} / {aceite} que se rellenan con los atributos
@@ -528,7 +538,7 @@ ruta('GET', '/api/inicio', (req, res) => {
 
   const plantillas = db.prepare('SELECT * FROM plantillas WHERE activo = 1 ORDER BY orden').all();
   const activos = db.prepare('SELECT id, clave, nombre, tipo FROM activos WHERE activo = 1').all();
-  const esViernes = new Date().getDay() === 5;
+  const esViernes = esViernesHoy();
 
   const tarjetas = [];
   for (const p of plantillas) {
@@ -675,6 +685,9 @@ ruta('POST', '/api/llenados', (req, res, _p, cuerpo) => {
 
   const plantilla = db.prepare('SELECT * FROM plantillas WHERE clave = ?').get(cuerpo.plantilla_clave);
   if (!plantilla) return json(res, 404, { error: 'Plantilla no encontrada' });
+  if (fueraDeSuDia(plantilla)) {
+    return json(res, 409, { error: `«${plantilla.nombre}» solo se llena los viernes.` });
+  }
 
   // Los campos de cabecera se capturan antes que nada. Uno de ellos actúa como
   // referencia y es lo que permite tener varios checklists el mismo día.
@@ -1072,6 +1085,66 @@ ruta('GET', '/api/llenados/(\\d+)/detalle', (req, res, p) => {
   llenado.firmas = db.prepare('SELECT rol, nombre, imagen, firmado_en FROM firmas WHERE llenado_id = ?').all(llenado.id);
   llenado.fotos = fotosDe(llenado.id);
   json(res, 200, llenado);
+});
+
+// Vigencias: el último valor capturado de cada ítem de fecha marcado como
+// vigencia, por unidad. Interesa el más reciente, no el historial: lo que importa
+// es si HOY la afiliación sigue al corriente.
+ruta('GET', '/api/reportes/vigencias', (req, res) => {
+  if (!exigir(req, res, 'reportes')) return;
+
+  const filas = db.prepare(`
+    SELECT i.texto AS concepto, i.meta,
+           COALESCE(a.nombre, '—') AS unidad, a.id AS activo_id,
+           r.valor AS fecha, l.periodo, l.creado_en, u.nombre AS capturo
+    FROM respuestas r
+    JOIN items i      ON i.id = r.item_id
+    JOIN llenados l   ON l.id = r.llenado_id
+    JOIN usuarios u   ON u.id = l.usuario_id
+    LEFT JOIN activos a ON a.id = l.activo_id
+    WHERE i.tipo_respuesta = 'fecha' AND r.valor IS NOT NULL AND TRIM(r.valor) <> ''
+    ORDER BY l.creado_en DESC
+  `).all();
+
+  // Solo el último por concepto + unidad.
+  const ultimos = new Map();
+  for (const f of filas) {
+    const llave = `${f.concepto}|${f.activo_id || 0}`;
+    if (!ultimos.has(llave)) ultimos.set(llave, f);
+  }
+
+  // Unidades que aún no lo tienen capturado: no aparecerían en la consulta de
+  // arriba, y justo esas son las que hay que perseguir.
+  const conceptos = db.prepare(`
+    SELECT DISTINCT i.texto AS concepto, i.meta, p.aplica_a
+    FROM items i
+    JOIN secciones s  ON s.id = i.seccion_id
+    JOIN plantillas p ON p.id = s.plantilla_id
+    WHERE i.tipo_respuesta = 'fecha' AND i.activo = 1 AND s.activo = 1 AND p.activo = 1
+  `).all();
+  const activos = db.prepare('SELECT id, nombre, tipo FROM activos WHERE activo = 1').all();
+
+  const vigencias = [];
+  for (const c of conceptos) {
+    const meta = JSON.parse(c.meta || '{}');
+    const unidades = c.aplica_a ? activos.filter((x) => x.tipo === c.aplica_a) : [null];
+    for (const unidad of unidades) {
+      const registro = ultimos.get(`${c.concepto}|${unidad ? unidad.id : 0}`);
+      vigencias.push({
+        concepto: c.concepto,
+        etiqueta: meta.etiqueta || 'Vigencia',
+        unidad: unidad ? unidad.nombre : '—',
+        fecha: registro ? registro.fecha : null,
+        capturo: registro ? registro.capturo : null,
+        capturado_en: registro ? registro.periodo : null,
+        ...describirVigencia(registro ? registro.fecha : null),
+      });
+    }
+  }
+
+  const orden = { vencida: 0, vence_hoy: 1, por_vencer: 2, sin_dato: 3, vigente: 4 };
+  vigencias.sort((x, y) => (orden[x.estado] - orden[y.estado]) || ((x.dias ?? 9e9) - (y.dias ?? 9e9)));
+  json(res, 200, vigencias);
 });
 
 // --- comparativa entre semanas ---

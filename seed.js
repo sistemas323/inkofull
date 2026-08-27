@@ -13,6 +13,7 @@ const OK = 'ok_problema';   // Satisfactorio / Con problema
 const REV = 'revisado';     // Revisado sí / no
 const NUM = 'conteo';       // Cantidad numérica
 const DOC = 'documento';    // Exige adjuntar uno o más archivos
+const FECHA = 'fecha';      // Se captura una fecha; con meta.vigencia calcula días restantes
 
 const PLANTILLAS = [
   {
@@ -103,6 +104,9 @@ const PLANTILLAS = [
           ['Póliza de seguro', OK],
           ['Dinero', OK],
           ['Fumigación de la unidad', OK],
+          ['¿Unidad se encuentra afiliada a ANTRA todavía?', FECHA, null,
+            { vigencia: true, etiqueta: 'Vigencia de la afiliación',
+              ayuda: 'Captura la fecha en que vence. La plataforma calcula los días que le quedan o los que lleva vencida.' }],
         ],
       },
     ],
@@ -503,8 +507,12 @@ function sincronizarEstructura() {
     'UPDATE plantillas SET campos = ?, por_etapas = ?, descripcion = ?, frecuencia = ?, requiere_supervision = ? WHERE id = ?');
   const buscarSeccion = db.prepare('SELECT id, etapa, condicion, activo FROM secciones WHERE plantilla_id = ? AND titulo = ?');
   const actualizarSeccion = db.prepare('UPDATE secciones SET etapa = ?, condicion = ?, activo = ? WHERE id = ?');
-  const buscarItem = db.prepare('SELECT id, texto, meta FROM items WHERE seccion_id = ? AND orden = ?');
-  const actualizarItem = db.prepare('UPDATE items SET texto = ?, meta = ? WHERE id = ?');
+  const buscarItem = db.prepare('SELECT id, texto, meta, tipo_respuesta FROM items WHERE seccion_id = ? AND orden = ?');
+  const actualizarItem = db.prepare('UPDATE items SET texto = ?, meta = ?, tipo_respuesta = ? WHERE id = ?');
+  const insertarItem = db.prepare(`
+    INSERT INTO items (seccion_id, orden, texto, tipo_respuesta, solo_activos, meta)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
 
   for (const p of PLANTILLAS) {
     const fila = buscarPlantilla.get(p.clave);
@@ -532,13 +540,21 @@ function sincronizarEstructura() {
         console.log(`  «${s.titulo}» ${activa ? 'actualizada' : 'RETIRADA de circulación'} (etapa ${etapa}).`);
       }
 
-      // El texto de los ítems también vive aquí: nada más lo edita, así que esta
-      // definición es la fuente de verdad y renombrar un ítem no pierde su historial.
-      s.items.forEach(([texto, , , meta], i) => {
+      // Los ítems también viven aquí: nada más los edita, así que esta definición
+      // es la fuente de verdad. Se actualizan los que cambiaron y se agregan los
+      // que no existían, sin tocar lo ya capturado — los id se conservan.
+      s.items.forEach(([texto, tipo, soloActivos, meta], i) => {
         const item = buscarItem.get(seccion.id, i);
         const metaJSON = JSON.stringify(meta || {});
-        if (item && (item.texto !== texto || item.meta !== metaJSON)) {
-          actualizarItem.run(texto, metaJSON, item.id);
+
+        if (!item) {
+          insertarItem.run(seccion.id, i, texto, tipo,
+            soloActivos ? JSON.stringify(soloActivos) : null, metaJSON);
+          console.log(`  Ítem nuevo en «${s.titulo}»: ${texto}`);
+          return;
+        }
+        if (item.texto !== texto || item.meta !== metaJSON || item.tipo_respuesta !== tipo) {
+          actualizarItem.run(texto, metaJSON, tipo, item.id);
           console.log(`  Ítem actualizado: «${texto}»`);
         }
       });

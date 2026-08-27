@@ -404,7 +404,9 @@ apareciendo en Reportes y en la exportación a Excel. Solo deja de pedirse.
 | Checklist Tránsito | Diario, uno por envío |
 
 Los de viernes aparecen el resto de la semana como *disponible el viernes* y no
-se pueden abrir. El servidor también lo verifica, no solo la pantalla.
+se pueden abrir. El servidor también lo rechaza — no basta con atenuar la
+tarjeta: quien llegue con una dirección guardada recibe un *«solo se llena los
+viernes»*.
 
 ---
 
@@ -497,6 +499,38 @@ Los documentos se guardan a mayor resolución que las fotos de evidencia (2200 p
 contra 1600), porque en una hoja de recepción hay que poder leer la firma y lo
 escrito a mano. Los PDF se guardan tal cual y se abren en una pestaña nueva.
 
+
+## Vigencias (afiliación ANTRA)
+
+En **Inspección de Unidad → 6. Documentación y extras** hay un ítem distinto a los
+demás: *«¿Unidad se encuentra afiliada a ANTRA todavía?»*. En vez de Bien/Problema
+se captura **la fecha en que vence la afiliación**, y la plataforma calcula sola
+cuánto le queda:
+
+| Lo capturado | Lo que muestra |
+|---|---|
+| Fecha futura lejana | *Le quedan 110 días* (verde) |
+| Dentro de 30 días o menos | *Le quedan 9 días* (ámbar) |
+| Hoy | *Vence hoy* (rojo) |
+| Fecha pasada | *Vencida hace 58 días* (rojo) |
+
+El cálculo aparece **en cuanto se captura la fecha**, sin esperar a ningún
+reporte, y el renglón se pinta según la urgencia. El pie de pantalla suma las
+vigencias vencidas junto a los problemas.
+
+### El reporte
+
+En **Reportes** hay un panel **Vigencias** con la última fecha capturada de cada
+unidad, ordenado por urgencia: primero lo vencido, luego lo próximo a vencer, y
+al final lo que está holgado. También aparecen las unidades **sin capturar**,
+que son justo las que hay que perseguir.
+
+> **La vigencia vencida no impide cerrar el checklist.** Se marca en rojo y sale
+> en el reporte, pero no bloquea: renovar una afiliación no depende de quien está
+> haciendo la inspección. Si prefieres que sí bloquee, es un cambio pequeño.
+
+Agregar otra vigencia —verificación, seguro, permisos— es un renglón más en
+`seed.js` con tipo `FECHA` y `meta.vigencia`; aparece sola en el mismo reporte.
 
 ## Evidencia fotográfica
 

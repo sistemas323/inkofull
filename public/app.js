@@ -1019,6 +1019,44 @@ const SELLO_SECCION = {
   despues: '<span class="etiqueta azul">Se completa al regresar</span>',
 };
 
+// Misma cuenta que hace el servidor, para que el operador vea el resultado en
+// cuanto captura la fecha y no tenga que esperar a un reporte.
+function describirVigencia(fechaISO) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fechaISO || ''))) return { estado: 'sin_dato', texto: 'Sin capturar' };
+  const [anio, mes, dia] = fechaISO.split('-').map(Number);
+  const hoy = new Date();
+  const dias = Math.round(
+    (Date.UTC(anio, mes - 1, dia) - Date.UTC(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())) / 86400000
+  );
+  if (dias < 0) return { estado: 'vencida', dias, texto: `Vencida hace ${Math.abs(dias)} día${Math.abs(dias) === 1 ? '' : 's'}` };
+  if (dias === 0) return { estado: 'vence_hoy', dias, texto: 'Vence hoy' };
+  if (dias <= 30) return { estado: 'por_vencer', dias, texto: `Le quedan ${dias} día${dias === 1 ? '' : 's'}` };
+  return { estado: 'vigente', dias, texto: `Le quedan ${dias} días` };
+}
+
+const CLASE_VIGENCIA = {
+  vencida: 'roja', vence_hoy: 'roja', por_vencer: 'ambar', vigente: 'verde', sin_dato: '',
+};
+
+// Ítem de fecha: en vez de Bien/Problema se captura una fecha, y al lado se
+// muestra cuánto le queda de vigencia.
+function pintarFecha(item, congelada) {
+  const r = estado.respuestas.get(llave(item.id, '-')) || {};
+  const v = describirVigencia(r.valor);
+  return `
+    <div class="item fecha ${v.estado}" data-item="${item.id}">
+      <span class="texto">
+        <b>${esc(item.texto)}</b>
+        ${item.meta.ayuda ? `<small>${esc(item.meta.ayuda)}</small>` : ''}
+      </span>
+      <span class="captura-fecha">
+        <label>${esc(item.meta.etiqueta || 'Vence el')}</label>
+        <input type="date" data-fecha value="${esc(r.valor || '')}" ${congelada ? 'disabled' : ''}>
+      </span>
+      <span class="estado-vigencia etiqueta ${CLASE_VIGENCIA[v.estado]}">${v.texto}</span>
+    </div>`;
+}
+
 function pintarItems(plantilla, soloLectura, estadoSeccion = () => 'activa') {
   return plantilla.secciones.map((seccion) => {
     const situacion = soloLectura ? 'cerrada' : estadoSeccion(seccion);
@@ -1028,6 +1066,7 @@ function pintarItems(plantilla, soloLectura, estadoSeccion = () => 'activa') {
       <h2>${esc(seccion.titulo)} ${SELLO_SECCION[situacion] || ''}</h2>
       ${seccion.items.map((item) => {
         if (item.tipo_respuesta === 'documento') return pintarDocumento(item, congelada);
+        if (item.tipo_respuesta === 'fecha') return pintarFecha(item, congelada);
         const r = estado.respuestas.get(llave(item.id, '-')) || {};
         const esProblema = r.valor === 'problema' || r.valor === 'no';
         const [bueno, malo] = item.tipo_respuesta === 'revisado'
@@ -1274,6 +1313,18 @@ function conectarCaptura() {
       return;
     }
 
+    const campoFecha = e.target.closest('.item.fecha [data-fecha]');
+    if (campoFecha) {
+      const fila = campoFecha.closest('.item');
+      const v = describirVigencia(campoFecha.value);
+      fila.className = `item fecha ${v.estado}`;
+      const etiqueta = fila.querySelector('.estado-vigencia');
+      etiqueta.textContent = v.texto;
+      etiqueta.className = `estado-vigencia etiqueta ${CLASE_VIGENCIA[v.estado]}`;
+      marcar(Number(fila.dataset.item), '-', { valor: campoFecha.value || null });
+      return;
+    }
+
     const celda = e.target.closest('td [data-columna]');
     if (celda) {
       const itemId = Number(celda.closest('tr').dataset.item);
@@ -1300,6 +1351,11 @@ function actualizarResumen() {
   // cuando ya tienen archivo, no cuando tienen valor.
   const todos = secciones.flatMap((s) => s.items);
   const documentos = todos.filter((i) => i.tipo_respuesta === 'documento');
+  const fechasVencidas = todos.filter((i) => {
+    if (i.tipo_respuesta !== 'fecha') return false;
+    const r = estado.respuestas.get(llave(i.id, '-')) || {};
+    return describirVigencia(r.valor).estado === 'vencida';
+  }).length;
   const documentosListos = documentos.filter((i) => fotosDe(i.id, '-').length > 0).length;
 
   const columnas = estado.plantilla.columnas.length;
@@ -1323,6 +1379,9 @@ function actualizarResumen() {
     partes.push(faltan
       ? `<b style="color:var(--alerta)">falta${faltan > 1 ? 'n' : ''} ${faltan} documento${faltan > 1 ? 's' : ''}</b>`
       : `<b style="color:var(--ok)">documentos completos</b>`);
+  }
+  if (fechasVencidas) {
+    partes.push(`<b style="color:var(--alerta)">${fechasVencidas} vigencia${fechasVencidas > 1 ? 's' : ''} vencida${fechasVencidas > 1 ? 's' : ''}</b>`);
   }
   if (problemas) partes.push(`<b style="color:var(--alerta)">${problemas} con problema</b>`);
   zona.innerHTML = partes.join(' · ');
@@ -1474,13 +1533,41 @@ function conectarFirmas() {
 // =========================================================== vista: reportes
 
 async function vistaReportes() {
-  encabezado('Reportes', 'Historial y problemas detectados');
-  const [problemas, historial] = await Promise.all([
+  encabezado('Reportes', 'Vigencias, problemas e historial');
+  const [problemas, historial, vigencias] = await Promise.all([
     api('GET', '/api/reportes/problemas'),
     api('GET', '/api/reportes/historial'),
+    api('GET', '/api/reportes/vigencias'),
   ]);
 
+  const porVencer = vigencias.filter((v) => ['vencida', 'vence_hoy', 'por_vencer'].includes(v.estado)).length;
+
   vista.innerHTML = `
+    ${vigencias.length ? `
+    <div class="panel">
+      <h2>Vigencias ${porVencer ? `<span class="etiqueta roja">${porVencer} por atender</span>` : '<span class="etiqueta verde">al corriente</span>'}</h2>
+      <p class="explica">
+        Última fecha capturada de cada unidad. Se ordena por urgencia: primero lo
+        vencido, luego lo que está por vencer.
+      </p>
+      <div class="desliza"><table class="captura">
+        <thead><tr>
+          <th class="fila-titulo">Concepto</th><th>Unidad</th><th>Vence</th>
+          <th>Situación</th><th>Días</th><th>Última captura</th>
+        </tr></thead>
+        <tbody>${vigencias.map((v) => `
+          <tr class="${v.estado === 'vencida' ? 'vigencia-vencida' : ''}">
+            <td class="fila-titulo">${esc(v.concepto)}</td>
+            <td>${esc(v.unidad)}</td>
+            <td>${v.fecha ? esc(v.fecha) : '—'}</td>
+            <td><span class="etiqueta ${CLASE_VIGENCIA[v.estado]}">${esc(v.texto)}</span></td>
+            <td>${v.dias === null ? '—' : v.dias}</td>
+            <td>${v.capturo ? `${esc(v.capturo)}<br><small style="color:var(--tinta-suave)">${esc(v.capturado_en || '')}</small>` : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>` : ''}
+
     <div class="panel">
       <h2>Problemas detectados</h2>
       ${problemas.length === 0 ? '<div class="vacio">Sin problemas reportados.</div>' : `
