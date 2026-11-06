@@ -273,7 +273,7 @@ body.en-reposo { overflow: hidden; }
 .tarjeta-usuario small { color: var(--tinta-suave); }
 .tarjeta-usuario .llave { margin-left: auto; color: var(--tinta-suave); font-size: 15px; }
 
-/* --- teclado numérico del PIN --- */
+/* --- teclado numérico de la clave --- */
 
 .pin-zona { padding: 20px; display: grid; justify-items: center; gap: 16px; }
 .pin-zona .quien { font-size: 15px; color: var(--tinta-suave); }
@@ -950,3 +950,488 @@ table.captura tr.inactiva td.fila-titulo { text-decoration: line-through; }
 .item.fecha.por_vencer { background: #FFFDF7; }
 
 table.captura tr.vigencia-vencida td { background: var(--alerta-suave); }
+
+/* Encabezados de la matriz de permisos por módulo. Al mostrar un módulo a la
+   vez las columnas son pocas, así que el texto va horizontal y se lee de
+   corrido — antes iba en vertical porque no cabía de otra forma. */
+table.matriz-permisos th.accion {
+  min-width: 118px;
+  max-width: 170px;
+  vertical-align: bottom;
+  padding: 10px 8px;
+  text-align: center;
+  white-space: normal;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+/* ------------------------------------------------------------- almacén */
+
+/* Las cifras de la portada. En el DASHBOARD del Excel eran celdas sueltas con
+   una fórmula cada una; aquí es una tira que se acomoda sola en la tablet. */
+.cifras-almacen {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.cifra {
+  background: var(--blanco);
+  border: 1px solid var(--azul-borde);
+  border-radius: var(--radio);
+  padding: 16px 18px;
+  box-shadow: var(--sombra);
+}
+
+.cifra b {
+  display: block;
+  font-family: var(--fuente-titulo);
+  font-size: 26px;
+  line-height: 1.1;
+  color: var(--azul-inko);
+}
+
+.cifra span { font-size: 13.5px; color: var(--tinta-suave); }
+.cifra.alerta b { color: var(--alerta); }
+
+.filtros-almacen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--azul-borde);
+}
+
+.filtros-almacen input[type="search"] { flex: 1 1 240px; min-width: 0; }
+
+.filtros-almacen input,
+.filtros-almacen select {
+  padding: 10px 12px;
+  border: 1px solid var(--azul-borde);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 15px;
+  background: var(--blanco);
+}
+
+/* Alta de un renglón: producto y cantidad en la misma línea, para que capturar
+   una entrega de ocho productos no obligue a abrir ocho ventanas. */
+.agregar-renglon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px 18px;
+  border-top: 1px solid var(--azul-borde);
+  background: var(--gris);
+}
+
+.agregar-renglon input[type="search"] { flex: 1 1 280px; min-width: 0; }
+.agregar-renglon input[type="number"] { flex: 0 0 130px; }
+
+.agregar-renglon input {
+  padding: 11px 12px;
+  border: 1px solid var(--azul-borde);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 15px;
+}
+
+.acciones-almacen { margin-top: 20px; display: grid; gap: 12px; }
+
+/* Un dato obligatorio que sigue vacío se marca en la propia celda: quien captura
+   no debería tener que leer el aviso de arriba para saber cuál le falta. */
+table.captura input.falta-dato {
+  border: 1px solid var(--alerta);
+  background: var(--alerta-suave);
+}
+
+table.captura .fuera-odt { color: var(--alerta); }
+
+.tarea.en_calidad { border-left-color: var(--azul-inko); }
+.tarea.por_autorizar { border-left-color: var(--azul-inko); }
+.tarea.aplicada, .tarea.aplicado { border-left-color: var(--ok); }
+.tarea.cancelada, .tarea.cancelado { border-left-color: var(--alerta); opacity: .7; }
+
+/* La tarjeta del módulo de Notificaciones avisa desde el menú cuántas cosas
+   esperan una decisión. Va en rojo porque es lo único del menú que reclama algo
+   de quien lo está mirando; el resto son puertas, esto es un recado. */
+.modulo .marca-esquina.cuenta-pendientes {
+  background: var(--alerta);
+  color: var(--blanco);
+}
+
+/* La pestaña de Limpieza destruye en vez de configurar; su bloque más delicado
+   —la carga inicial de existencias— se marca para que no se toque de pasada. */
+.panel.peligroso { border-color: var(--alerta); }
+.panel.peligroso > h2 { color: var(--alerta); }
+.btn.peligro {
+  background: var(--alerta);
+  border-color: var(--alerta);
+  color: var(--blanco);
+}
+
+/* La caja de carga de la ODT: un botón grande y su explicación al lado, con
+   espacio debajo para el resumen de lo que se leyó del archivo. */
+.cargar-odt { position: relative; padding: 0 18px 18px; }
+.cargar-odt .resumen { display: block; margin-top: 8px; }
+.cargar-odt #avance-odt:not(:empty) { margin-top: 14px; }
+
+/* El camino de un traspaso: los cuatro pasos, con el andado marcado. Se pinta
+   completo aunque falten pasos, para que se vea a dónde va y no solo dónde está. */
+.camino {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  list-style: none; margin: 0; padding: 0 18px 18px;
+}
+.camino li {
+  flex: 1 1 150px; min-width: 150px;
+  border: 1px solid var(--borde); border-radius: 10px;
+  padding: 10px 12px; background: var(--fondo-suave);
+}
+.camino li b { display: block; font-size: 14.5px; }
+.camino li .meta { display: block; font-size: 12.5px; color: var(--tinta-suave); margin-top: 2px; }
+.camino li.hecho { border-color: var(--exito); background: var(--exito-suave, var(--fondo-suave)); }
+.camino li.hecho b { color: var(--exito); }
+.camino li.en-curso { border-color: var(--azul-inko); border-width: 2px; }
+.camino li.en-curso b { color: var(--azul-inko); }
+
+.tira-fotos { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 18px 14px; }
+.tira-fotos figure { margin: 0; }
+.tira-fotos img {
+  width: 130px; height: 130px; object-fit: cover;
+  border-radius: 10px; border: 1px solid var(--borde);
+}
+
+/* El renglón del Administrador en la matriz de permisos: todo encendido y sin
+   nada que tocar. Puede todo por el cargo, no porque se lo hayan otorgado. */
+.matriz-permisos .casilla.por-cargo {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--exito); cursor: default; opacity: .75;
+}
+
+/* La hoja de incidencias: un renglón por persona, como el papel. Quien no tiene
+   nada se pinta apagado pero se pinta — un nombre limpio también es información. */
+.hoja-incidencias { padding: 0 18px 18px; }
+.renglon-persona {
+  display: grid; grid-template-columns: 200px 1fr; gap: 14px;
+  padding: 12px 0; border-bottom: 1px solid var(--borde);
+}
+.renglon-persona:last-child { border-bottom: 0; }
+.renglon-persona .quien b { display: block; }
+.renglon-persona .quien small { color: var(--tinta-suave); }
+.renglon-persona.limpio { opacity: .55; }
+.renglon-persona .sin-nada { color: var(--tinta-suave); font-size: 14px; }
+
+.anotacion {
+  border-left: 3px solid var(--borde); padding: 6px 0 6px 12px; margin-bottom: 10px;
+}
+.anotacion:last-child { margin-bottom: 0; }
+.anotacion.autorizada { border-left-color: var(--alerta); }
+.anotacion.por_autorizar { border-left-color: var(--ambar, #d99100); }
+.anotacion.rechazada, .anotacion.cancelada { opacity: .6; text-decoration-color: var(--tinta-suave); }
+.anotacion .cabeza { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.anotacion .fecha { font-weight: 600; font-size: 14px; }
+.anotacion p { margin: 5px 0; }
+.anotacion small { color: var(--tinta-suave); }
+.anotacion .fila-botones { margin-top: 8px; }
+
+@media (max-width: 700px) {
+  .renglon-persona { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* Dinero en la unidad: el monto con signo de pesos y, debajo, la foto obligatoria. */
+.item.dinero { flex-wrap: wrap; }
+.item.dinero.pendiente { border-left: 3px solid var(--alerta); }
+.captura-dinero { display: flex; flex-direction: column; gap: 4px; }
+.captura-dinero label { font-size: 12.5px; color: var(--tinta-suave); }
+.captura-dinero .moneda { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.captura-dinero input { width: 140px; font-size: 16px; padding: 8px 10px; }
+.item.dinero .evidencia { flex-basis: 100%; }
+
+/* Editor de preguntas: un renglón por pregunta, con sus controles a la derecha. */
+.editor-cabeza { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--borde); }
+.editor-titulo { flex: 1 1 260px; font-weight: 700; font-size: 16px; min-height: auto; }
+.editor-items { padding: 8px 18px 18px; }
+.editor-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--borde); }
+.editor-item input.obs { flex: 1 1 280px; min-height: auto; }
+.editor-item select, .editor-nuevo select { padding: 8px; }
+.editor-num { width: 24px; text-align: right; color: var(--tinta-suave); font-size: 13px; }
+.editor-acciones { display: inline-flex; gap: 6px; margin-left: auto; }
+.editor-acciones .btn { padding: 6px 10px; }
+.editor-oblig { display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; }
+.editor-nota { flex-basis: 100%; padding-left: 32px; color: var(--tinta-suave); }
+.editor-nuevo { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.editor-nuevo input.obs { flex: 1 1 280px; min-height: auto; }
+
+/* Editor de preguntas: la barra de guardar va fija hasta abajo, a la vista aunque
+   el checklist sea largo. Se enciende en cuanto hay algo sin guardar. */
+.barra-guardar {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px;
+  margin-top: 18px; padding: 12px 18px;
+  background: var(--blanco, #fff); border-top: 2px solid var(--borde);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, .06);
+}
+.barra-guardar #estado-cambios { margin-right: auto; color: var(--tinta-suave); }
+.barra-guardar.pendiente { border-top-color: var(--alerta); }
+.barra-guardar.pendiente #estado-cambios { color: var(--alerta); font-weight: 600; }
+.editor-seccion.nueva, .editor-item.nuevo { background: var(--fondo-suave); }
+
+/* Reporte de Tránsito: el rango de fechas y sus atajos. */
+.rango-fechas { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; padding: 0 18px 18px; }
+.rango-fechas label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--tinta-suave); }
+.rango-fechas input[type="date"] { font: inherit; padding: 8px 10px; border: 1px solid var(--linea, #d0d4da); border-radius: 8px; }
+
+/* Tránsito: lo que se escribe (placas, chofer, proveedor) y la hora de arribo. */
+.captura-libre { display: flex; flex: 1 1 220px; min-width: 0; }
+.captura-libre input { width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--linea, #d0d4da); border-radius: 8px; background: #fff; }
+.captura-libre input:disabled { background: transparent; }
+.item.libre.pendiente .captura-libre input { border-color: var(--alerta, #c0392b); }
+
+/* --- la lista de partidas al mandar a contar --- */
+/* Una casilla por producto, con su propio alto para que se pueda tocar con el
+   dedo en la tablet. Lo que ya está en otro conteo abierto se ve apagado y no
+   se deja marcar: dos personas contando lo mismo producen dos ajustes. */
+.lista-partidas {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--linea);
+  border-radius: 10px;
+  padding: 6px;
+  background: var(--fondo-suave, #fff);
+}
+.lista-partidas .partida {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.lista-partidas .partida:hover { background: var(--realce, #f3f5f8); }
+.lista-partidas .partida input { width: 22px; height: 22px; flex: none; }
+.lista-partidas .partida span { display: flex; flex-direction: column; line-height: 1.25; }
+.lista-partidas .partida small { color: var(--tinta-suave); }
+.lista-partidas .partida.bloqueada { opacity: .5; cursor: not-allowed; }
+.lista-partidas .partida .ocupado {
+  margin-left: auto;
+  font-size: .78rem;
+  color: var(--tinta-suave);
+}
+
+/* --- el detalle de cajas de un conteo --- */
+.fila-caja {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.fila-caja input { max-width: 110px; }
+.fila-caja span { color: var(--tinta-suave); }
+.celda-cajas small { display: inline-block; line-height: 1.3; }
+
+/* --- la bandeja: pestañas arriba, luego un bloque por módulo --- */
+.pestanas-avisos {
+  display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 14px;
+  background: var(--blanco); border: 1px solid var(--azul-borde); border-radius: 14px;
+}
+.pestanas-avisos button {
+  border: 0; background: none; border-radius: 10px; padding: 10px 20px;
+  font-weight: 700; color: var(--tinta-suave); text-align: left;
+}
+.pestanas-avisos button small { display: block; font-weight: 600; font-size: 12px; opacity: .8; }
+.pestanas-avisos button .cuenta {
+  display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px;
+  background: var(--azul-claro); color: var(--azul-inko); font-size: 13px;
+}
+.pestanas-avisos button[aria-selected="true"] { background: var(--azul-inko); color: var(--blanco); }
+.pestanas-avisos button[aria-selected="true"] .cuenta { background: rgba(255, 255, 255, .2); color: var(--blanco); }
+
+.chips-filtro { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.chip-filtro {
+  border: 1px solid var(--azul-borde); background: var(--blanco); color: var(--azul-inko);
+  border-radius: 999px; padding: 7px 14px; font-weight: 600; font-size: 14px;
+}
+.chip-filtro[aria-pressed="true"] { background: var(--azul-claro); border-color: var(--azul-inko); }
+
+.bloque-avisos {
+  background: var(--blanco); border: 1px solid var(--azul-borde); border-radius: var(--radio);
+  box-shadow: var(--sombra); margin-bottom: 14px; overflow: hidden;
+}
+.bloque-avisos > h2 {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  font-size: 17px; color: var(--azul-inko); border-bottom: 1px solid var(--azul-borde);
+}
+.grupo-avisos + .grupo-avisos { border-top: 1px solid var(--azul-borde); }
+.rotulo-grupo {
+  margin: 0; padding: 9px 16px 4px; font-size: 13px; color: var(--tinta-suave);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.rotulo-grupo .tipo {
+  font-weight: 700; text-transform: uppercase; letter-spacing: .06em; font-size: 11px;
+  padding: 2px 8px; border-radius: 999px; background: var(--azul-claro); color: var(--azul-inko);
+}
+.rotulo-grupo .tipo-vigilar { background: var(--ambar-suave); color: var(--ambar); }
+.rotulo-grupo .tipo-capturar { background: var(--gris); color: var(--tinta); border: 1px solid var(--azul-borde); }
+.rotulo-grupo span:last-child { font-weight: 600; color: var(--tinta); }
+.fila-aviso {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  border: 0; background: none; text-align: left; padding: 10px 16px;
+  border-top: 1px solid #EDF1F6;
+}
+.rotulo-grupo + .fila-aviso { border-top: 0; }
+.fila-aviso:hover { background: var(--gris); }
+.fila-aviso .que { flex: 1; min-width: 0; }
+.fila-aviso .que b { display: block; font-weight: 700; }
+.fila-aviso .que small { display: block; color: var(--tinta-suave); font-size: 13.5px; }
+.fila-aviso .cuando { font-size: 13px; color: var(--tinta-suave); white-space: nowrap; }
+.marca-fila { width: 8px; height: 8px; border-radius: 50%; background: var(--azul-inko); flex: none; }
+.marca-fila.urgente { background: var(--alerta); }
+.marca-fila.hecho { background: var(--ok); }
+
+/* Un renglón de inventario que lleva a algún lado tiene que decirlo. */
+tr.clicable { cursor: pointer; }
+tr.clicable:hover { background: var(--realce, #f3f5f8); }
+
+/* La ventana de las partidas necesita más ancho que una de dos campos. */
+.caja-modal.ancha { max-width: 720px; }
+
+/* --- Permisos: la lista de una persona en un módulo --- */
+/* Un renglón por permiso, tocable entero: en la tablet la casilla sola era un
+   blanco demasiado chico. Encendido, la casilla se pone verde como en el resto. */
+.lista-permisos { display: grid; gap: 8px; padding: 0 18px 18px; }
+.renglon-permiso {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1.5px solid var(--azul-borde);
+  border-radius: var(--radio);
+  background: var(--blanco);
+  font: inherit;
+  color: var(--tinta);
+  cursor: pointer;
+}
+.renglon-permiso:hover:not(:disabled) { border-color: var(--azul-inko); }
+.renglon-permiso:disabled { cursor: default; opacity: .75; }
+.renglon-permiso .casilla { flex: none; display: grid; place-items: center; }
+.renglon-permiso[aria-pressed="true"] .casilla { background: var(--ok); border-color: var(--ok); color: var(--blanco); }
+.renglon-permiso .texto { display: flex; flex-direction: column; gap: 3px; }
+.renglon-permiso .texto small { color: var(--tinta-suave); }
+.renglon-permiso.ajustado { background: var(--azul-claro); }
+.renglon-permiso.pendiente-guardar { background: #FFF6E5; box-shadow: inset 0 0 0 2px var(--ambar); }
+
+/* --- la imagen de una unidad o de un material --- */
+.celda-imagen { min-width: 130px; }
+.imagen-catalogo { display: block; width: 96px; height: 72px; object-fit: cover; border-radius: 8px; margin: 0 auto 6px; background: var(--gris); }
+.sin-imagen { display: block; color: var(--tinta-suave); font-size: 13px; margin-bottom: 6px; }
+.celda-imagen .fila-botones { justify-content: center; gap: 6px; }
+.tarea.con-imagen { position: relative; padding-left: 104px; min-height: 96px; }
+.tarea .imagen-tarjeta {
+  position: absolute; left: 12px; top: 12px;
+  width: 80px; height: 72px; object-fit: cover; border-radius: 8px; background: var(--gris);
+}
+.ficha-unidad {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 14px; margin-bottom: 14px;
+  border: 1px solid var(--azul-borde); border-radius: var(--radio); background: var(--blanco);
+}
+.ficha-unidad img { width: 120px; height: 90px; object-fit: cover; border-radius: 8px; background: var(--gris); }
+.ficha-unidad span { display: flex; flex-direction: column; }
+.ficha-unidad small { color: var(--tinta-suave); }
+.imagen-lote { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; margin-right: 8px; vertical-align: middle; }
+.imagen-renglon { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; margin-right: 8px; vertical-align: middle; float: left; }
+
+/* --- la devolución: su motivo, a la vista de quien aprueba --- */
+.motivo-destacado {
+  margin: 0; padding: 12px 14px;
+  border-left: 4px solid var(--ambar); background: var(--ambar-suave);
+  border-radius: 8px; white-space: pre-wrap;
+}
+
+/* --- la salida por calidad: foto de cada producto --- */
+.celda-foto-renglon { min-width: 150px; }
+.celda-foto-renglon .miniaturas { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 6px; }
+table.captura textarea { width: 100%; font: inherit; border: 1px solid var(--azul-borde); border-radius: 8px; padding: 6px 8px; }
+table.captura textarea.falta-dato { border-color: var(--alerta); background: var(--alerta-suave); }
+
+/* --- re-ingreso: una tarjeta por caja, con lo que trae dentro --- */
+.cajas-reingreso { display: grid; gap: 12px; padding: 0 18px 12px; }
+.caja-reingreso { border: 1.5px solid var(--azul-borde); border-radius: var(--radio); background: var(--blanco); overflow: hidden; }
+.caja-reingreso header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--gris); }
+.caja-reingreso.vacia { border-style: dashed; }
+.caja-reingreso.sobra { border-color: var(--alerta); }
+.caja-reingreso .agregar-renglon { padding: 10px 14px; }
+
+
+/* --- Producción: la barra de avance --- */
+.barra-avance {
+  display: inline-block; width: 90px; height: 10px; vertical-align: middle;
+  background: var(--azul-claro); border-radius: 6px; overflow: hidden; margin-right: 6px;
+}
+.barra-avance span { display: block; height: 100%; background: var(--ok); border-radius: 6px; }
+.acciones-partida { white-space: nowrap; }
+.acciones-partida .btn { padding: 7px 10px; font-size: 13.5px; }
+.tabla-reparto input { min-width: 64px; border: 1px solid var(--azul-borde) !important; border-radius: 6px; background: var(--blanco) !important; }
+
+/* --- modo de pruebas: la cinta que lo recuerda mientras se prueba --- */
+.cinta-prueba {
+  position: sticky; top: 54px; z-index: 19;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 20px; background: var(--ambar-suave); color: var(--ambar);
+  border-bottom: 2px solid var(--ambar); font-size: 14.5px;
+}
+.cinta-prueba .marca-prueba {
+  font-weight: 800; text-transform: uppercase; letter-spacing: .08em; font-size: 12px;
+  background: var(--ambar); color: var(--blanco); padding: 3px 9px; border-radius: 999px;
+}
+.cinta-prueba .texto { flex: 1; min-width: 220px; color: var(--tinta); }
+.cinta-prueba .btn { padding: 7px 12px; font-size: 14px; }
+.lista-breve { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+
+/* --- puestos --- */
+.rejilla-puestos {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px; padding: 0 18px 18px;
+}
+.tarjeta-puesto {
+  border: 1px solid var(--azul-borde); border-radius: var(--radio); padding: 14px;
+  display: grid; gap: 8px; align-content: start; background: var(--blanco);
+}
+.tarjeta-puesto.retirado { opacity: .65; border-style: dashed; }
+.tarjeta-puesto .cabeza { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tarjeta-puesto .cabeza b { font-size: 16.5px; color: var(--azul-inko); margin-right: auto; }
+.tarjeta-puesto small { color: var(--tinta-suave); }
+.tarjeta-puesto .fila-botones .btn { padding: 7px 11px; font-size: 14px; }
+.personas-prueba { display: flex; flex-wrap: wrap; gap: 6px; }
+.personas-prueba .chip-filtro { padding: 5px 10px; font-size: 13px; }
+.subtitulo-panel { padding: 4px 18px 10px; font-size: 14px; color: var(--tinta-suave); }
+.nota-campo { display: block; color: var(--tinta-suave); margin: 4px 0 12px; }
+
+/* --- permisos: los tres pasos en una fila --- */
+.pasos-permisos {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 16px 18px 10px;
+}
+@media (max-width: 760px) { .pasos-permisos { grid-template-columns: 1fr; } }
+
+/* --- enlaces entre módulos --- */
+.tira-conexiones {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 14px; padding: 10px 14px;
+  background: var(--blanco); border: 1px solid var(--azul-borde); border-radius: var(--radio);
+}
+.tira-conexiones > span:first-child {
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--tinta-suave);
+}
+.liga-doc {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 11px; border-radius: 999px;
+  border: 1px solid var(--azul-borde); background: var(--azul-claro); color: var(--azul-inko);
+  font-weight: 700; font-size: 14px; text-decoration: none;
+}
+a.liga-doc::after { content: '↗'; font-size: 12px; opacity: .7; }
+a.liga-doc:hover { border-color: var(--azul-inko); }
+.liga-doc.sin-acceso { background: var(--gris); color: var(--tinta-suave); }
+.dato-conexion { font-size: 14px; color: var(--tinta-suave); display: inline-flex; gap: 6px; align-items: center; }

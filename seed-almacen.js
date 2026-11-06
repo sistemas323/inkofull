@@ -1,0 +1,725 @@
+'use strict';
+
+// Carga inicial del módulo de Almacén: los datos maestros del libro
+// GESTION_ALMACEN_INKO.xlsm, transcritos renglón por renglón. Idempotente,
+// igual que el resto de la siembra: vuelve a correrlo y solo inserta lo que falta.
+
+const { db } = require('./db');
+const { semanaISO } = require('./fechas');
+
+// Las dos bodegas del libro. La clave es la que se usaba entre paréntesis en
+// cada hoja del Excel («San Luis (B1)»); aquí van separadas para poder
+// mostrarlas de una manera y buscarlas de otra.
+const BODEGAS = [
+  ["B1", "San Luis"],
+  ["B2", "Bellavista"],
+];
+
+// Las plataformas de las que INKO hace retiros. Un retiro entra por la misma
+// puerta que una entrega de proveedor, así que la plataforma ocupa el lugar
+// del proveedor en la recepción que se abre en Calidad.
+const PLATAFORMAS = ["Mercado Libre Full", "Amazon FBA"];
+
+// La hoja CATALOGO, 121 renglones. Columnas: SKU, modelo, tipo de material,
+// nombre del producto y stock mínimo. La sexta columna no venía en el Excel:
+// es el modelo del catálogo de Calidad contra el que se muestrea lo que entra
+// de ese producto. Los 37 productos que no lo traen —cajas, playo, portarollos,
+// papel bond— no tienen especificación que revisar, y entran sin muestreo.
+const PRODUCTOS = [
+  ["SKU000001", "DK1201", "Etiquetas Compatibles Brother", "Etiqueta DK1201 compatible con Brother", 0, "29X90 BROTHER DK1201"],
+  ["SKU000002", "DK2251", "Etiquetas Compatibles Brother", "Etiqueta Brother 62mm (DK2251) Ngo/Rojo", 0, null],
+  ["SKU000003", "62mm Verde", "Etiquetas Compatibles Brother", "Etiqueta Brother 62mm DK2205 (Verde)", 0, "62 BROTHER DK2205"],
+  ["SKU000004", "62mm Rojo", "Etiquetas Compatibles Brother", "Etiqueta Brother 62mm DK2205 (Rojo)", 0, "62 BROTHER DK2205"],
+  ["SKU000005", "62mm Plastica", "Etiquetas Compatibles Brother", "Etiqueta Brother 62mm DK2205 (PLÁSTICA)", 0, "62 BROTHER DK2205"],
+  ["SKU000006", "62mm", "Etiquetas Compatibles Brother", "Etiqueta Brother 62mm DK2205 (Blanco)", 4000, "62 BROTHER DK2205"],
+  ["SKU000007", "62mm Azul", "Etiquetas Compatibles Brother", "Etiqueta Brother 62mm DK2205 (Azul)", 0, "62 BROTHER DK2205"],
+  ["SKU000008", "62mm Amarillo", "Etiquetas Compatibles Brother", "Etiqueta Brother 62mm DK2205 (Amarillo)", 0, "62 BROTHER DK2205"],
+  ["SKU000009", "29mm", "Etiquetas Compatibles Brother", "Etiqueta Brother 29mm DK2210", 1500, "29 BROTHER DK2210"],
+  ["SKU000010", "17x54mm", "Etiquetas Compatibles Brother", "Etiqueta Brother 17x54 DK1204", 500, "17X54 BROTHER DK1204"],
+  ["SKU000011", "4x4\"_AMA", "Etiquetas Térmicas", "Etiqueta Térmica Directa 4x4 pulgadas (Amarillo)", 0, "4X4"],
+  ["SKU000012", "4x4\"", "Etiquetas Térmicas", "Etiqueta Térmica Directa 4x4 pulgadas Blanco", 0, "4X4"],
+  ["SKU000013", "4x3\"_AMA", "Etiquetas Térmicas", "Etiqueta Térmica Directa 4x3 pulgadas (Amarillo)", 0, "4X3"],
+  ["SKU000014", "4x3\"", "Etiquetas Térmicas", "Etiqueta Térmica Directa 4x3 pulgadas Blanco", 0, "4X3"],
+  ["SKU000015", "4x2\"_AMA", "Etiquetas Térmicas", "Etiqueta Termica Directa 4x2 Pulgadas (Amarillo)", 0, "4X2"],
+  ["SKU000016", "4x2\"", "Etiquetas Térmicas", "Etiqueta Termica Directa 4x2 Pulgadas Blanco", 0, "4X2"],
+  ["SKU000017", "4x1\"_AMA", "Etiquetas Térmicas", "Etiqueta Térmica Directa 4x1 pulgadas (Amarillo)", 0, "4X1"],
+  ["SKU000018", "4x1\"", "Etiquetas Térmicas", "Etiqueta Térmica Directa 4x1 pulgadas Blanco", 0, "4X1"],
+  ["SKU000019", "40x30 Mini Plastica", "Etiquetas Térmicas", "Etiqueta Termica Directa 40x30mm (Mini Vinil)", 0, "40X30 MINI"],
+  ["SKU000020", "3x1\"", "Etiquetas Térmicas", "Etiqueta Térmica Directa 3x1 pulgadas", 0, "3X1 (76X25)"],
+  ["SKU000021", "22x16", "Etiquetas Térmicas", "Etiqueta Térmica Directa 22x16 mm", 0, "22X16"],
+  ["SKU000022", "75x51", "Etiquetas Térmicas", "Etiqueta Térmica 76x51", 600, "3X2 (76X51)"],
+  ["SKU000023", "57x40 eti", "Etiquetas Térmicas", "Etiqueta Térmica 57x40", 800, "57X40 BASCULA"],
+  ["SKU000024", "57x30 Blanco Label", "Etiquetas Térmicas", "Etiqueta Térmica 57x30 (Blanco)", 500, "57X30 CONTINUA"],
+  ["SKU000025", "57x30 Azul Label", "Etiquetas Térmicas", "Etiqueta Térmica 57x30 (Azul)", 200, "57X30 CONTINUA"],
+  ["SKU000026", "51x25 Verde", "Etiquetas Térmicas", "Etiqueta Térmica 51x25 (Verde)", 50, "51X25"],
+  ["SKU000027", "51x25 Plata", "Etiquetas Térmicas", "Etiqueta Térmica 51x25 (Poliéster Plata)", 0, "51X25"],
+  ["SKU000028", "51x25 Plastica", "Etiquetas Térmicas", "Etiqueta Térmica 51x25 (Plástica)", 50, "51X25"],
+  ["SKU000029", "51x25 Naranja", "Etiquetas Térmicas", "Etiqueta Térmica 51x25 (Naranja)", 50, "51X25"],
+  ["SKU000030", "51x25", "Etiquetas Térmicas", "Etiqueta Térmica 51x25 (Blanco)", 3000, "51X25"],
+  ["SKU000031", "51x25 Amarilla", "Etiquetas Térmicas", "Etiqueta Térmica 51x25 (Amarillo)", 50, "51X25"],
+  ["SKU000032", "4x8\"", "Etiquetas Térmicas", "Etiqueta Térmica 4x8", 1300, "4X8"],
+  ["SKU000033", "4x6_Verde", "Etiquetas Térmicas", "Etiqueta Térmica 4x6 (Verde)", 0, "4X6"],
+  ["SKU000034", "4x6_Rosa", "Etiquetas Térmicas", "Etiqueta Térmica 4x6 (Rosa)", 0, "4X6"],
+  ["SKU000035", "4x6_Rojo", "Etiquetas Térmicas", "Etiqueta Térmica 4x6 (Rojo)", 0, "4X6"],
+  ["SKU000036", "4x6_Naranja", "Etiquetas Térmicas", "Etiqueta Térmica 4x6 (Naranja)", 0, "4X6"],
+  ["SKU000037", "4x6_Azul", "Etiquetas Térmicas", "Etiqueta Térmica 4x6 (Azul)", 0, "4X6"],
+  ["SKU000038", "4x6_Amarillo", "Etiquetas Térmicas", "Etiqueta Térmica 4x6 (Amarillo)", 0, "4X6"],
+  ["SKU000039", "4x6\"", "Etiquetas Térmicas", "Etiqueta Térmica 4x6 Blanco", 0, "4X6"],
+  ["SKU000040", "40x30", "Etiquetas Térmicas", "Etiqueta Térmica 40x30 (800 etiquetas p/r)", 500, "40X30"],
+  ["SKU000041", "38x25 Verde", "Etiquetas Térmicas", "Etiqueta Térmica 38x25 (Verde)", 100, "38X25"],
+  ["SKU000042", "38x25 Rojo", "Etiquetas Térmicas", "Etiqueta Térmica 38x25 (Rojo)", 50, "38X25"],
+  ["SKU000043", "38x25 Naranja", "Etiquetas Térmicas", "Etiqueta Térmica 38x25 (Naranja)", 50, "38X25"],
+  ["SKU000044", "38x25", "Etiquetas Térmicas", "Etiqueta Térmica 38x25 (Blanco)", 2500, "38X25"],
+  ["SKU000045", "38x25 Amarillo", "Etiquetas Térmicas", "Etiqueta Térmica 38x25 (Amarillo)", 50, "38X25"],
+  ["SKU000046", "Cola Rata", "Etiquetas Térmicas", "Etiqueta Plástica Termica Directa Cola Rata", 200, null],
+  ["SKU000047", "Frágil", "Etiquetas Térmicas", "Etiqueta \"FRAGIL\"", 0, null],
+  ["SKU000048", "Circulo Verde 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm (Verde)", 0, "51 CIRCULO"],
+  ["SKU000049", "Circulo Rosa 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm (Rosa)", 0, "51 CIRCULO"],
+  ["SKU000050", "Circulo Rojo 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm (Rojo)", 0, "51 CIRCULO"],
+  ["SKU000051", "Circulo Naranja 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm (Naranja)", 0, "51 CIRCULO"],
+  ["SKU000052", "Circulo Lila 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm (Lila)", 0, "51 CIRCULO"],
+  ["SKU000053", "Circulo Blanco 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm Blanco", 0, "51 CIRCULO"],
+  ["SKU000054", "Circulo Azul Fuerte 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm (Azul Reflex)", 0, "51 CIRCULO"],
+  ["SKU000055", "Circulo Azul 51x51", "Etiquetas Térmicas", "Etiqueta Circular 51mm (Azul)", 0, "51 CIRCULO"],
+  ["SKU000056", "Portarollo DK2251", "Portarollos", "Portarollo DK2251", 0, null],
+  ["SKU000057", "Portarollo DK2210", "Portarollos", "PORTAROLLO DK2210", 50, null],
+  ["SKU000058", "Portarollo DK2205", "Portarollos", "PORTAROLLO DK2205", 150, null],
+  ["SKU000059", "Portarollo DK1204", "Portarollos", "PORTAROLLO DK1204", 50, null],
+  ["SKU000060", "Portarollo DK1201", "Portarollos", "PORTAROLLO DK1201", 0, null],
+  ["SKU000061", "Bond", "Rollos Papel", "Rollo Bond 76x70", 0, null],
+  ["SKU000062", "Autocopia", "Rollos Papel", "Rollo Autocopiante 76x70", 0, null],
+  ["SKU000063", "110x120", "Rollos Papel", "110x120 ROLLO", 0, null],
+  ["SKU000064", "102x70", "Rollos Papel", "102x70 ROLLO", 0, null],
+  ["SKU000065", "80x80", "Rollos Térmicos", "Rollo Térmico 80x80", 7000, "80X80"],
+  ["SKU000066", "80x70_ Color_Verde", "Rollos Térmicos", "Rollo Térmico 80x70 (Verde)", 0, "80X70"],
+  ["SKU000067", "80x70_ Color_Rosa", "Rollos Térmicos", "Rollo Térmico 80x70 (Rosa)", 0, "80X70"],
+  ["SKU000068", "80x70_Color_Naranj", "Rollos Térmicos", "Rollo Térmico 80x70 (Naranja)", 0, "80X70"],
+  ["SKU000069", "80x70_Color_Lila", "Rollos Térmicos", "Rollo Térmico 80x70 (Lila)", 0, "80X70"],
+  ["SKU000070", "80x70 Estrella Roja", "Rollos Térmicos", "Rollo Térmico 80x70 ESTRELLA ROJA", 0, "80X70"],
+  ["SKU000071", "80x70", "Rollos Térmicos", "Rollo Térmico 80x70 (Blanco)", 74000, "80X70"],
+  ["SKU000072", "80x70_ Color_Azul", "Rollos Térmicos", "Rollo Térmico 80x70 (Azul)", 0, "80X70"],
+  ["SKU000073", "80x70_ Color_Amarillo", "Rollos Térmicos", "Rollo Térmico 80x70 (Amarillo)", 0, "80X70"],
+  ["SKU000074", "80x50", "Rollos Térmicos", "Rollo Térmico 80x50", 1000, "80X50"],
+  ["SKU000075", "57x60 Amarillo", "Rollos Térmicos", "Rollo Térmico 57x60 Amarillo", 0, "57X60"],
+  ["SKU000076", "57x60", "Rollos Térmicos", "Rollo Térmico 57x60", 13000, "57X60"],
+  ["SKU000077", "57x45", "Rollos Térmicos", "Rollo Térmico 57x45", 6000, "57X45"],
+  ["SKU000078", "57x40_Verde", "Rollos Térmicos", "Rollo Térmico 57x40 (Verde)", 0, "57X40 ROLLO"],
+  ["SKU000079", "57x40_Rosa", "Rollos Térmicos", "Rollo Térmico 57x40 (Rosa)", 0, "57X40 ROLLO"],
+  ["SKU000080", "57x40_Naranja", "Rollos Térmicos", "Rollo Térmico 57x40 (Naranja)", 0, "57X40 ROLLO"],
+  ["SKU000081", "57x40_Morado", "Rollos Térmicos", "Rollo Térmico 57x40 (Lila)", 0, "57X40 ROLLO"],
+  ["SKU000082", "57x40", "Rollos Térmicos", "Rollo Térmico 57x40 (Blanco)", 38000, "57X40 ROLLO"],
+  ["SKU000083", "57x40_Azul", "Rollos Térmicos", "Rollo Térmico 57x40 (Azul)", 0, "57X40 ROLLO"],
+  ["SKU000084", "57x40_Amarillo", "Rollos Térmicos", "Rollo Térmico 57x40 (Amarillo)", 0, "57X40 ROLLO"],
+  ["SKU000085", "57x30 Rosa Roll", "Rollos Térmicos", "Rollo Térmico 57x30 (Rosa)", 100, "57X30 ROLLO"],
+  ["SKU000086", "57x30 Blanco Roll", "Rollos Térmicos", "Rollo Térmico 57x30 (Blanco)", 1000, "57X30 ROLLO"],
+  ["SKU000087", "57x30 Azul Roll", "Rollos Térmicos", "Rollo Térmico 57x30 (Azul)", 100, "57X30 ROLLO"],
+  ["SKU000088", "57x30 Amarillo Roll", "Rollos Térmicos", "Rollo Térmico 57x30 (Amarillo)", 100, "57X30 ROLLO"],
+  ["SKU000089", "80x80 Pedido Especial", "Rollos Térmicos", "80x80 PEDIDO ESPECIAL", 0, "80X80"],
+  ["SKU000090", "80x70_Gracias_Verde", "Rollos Térmicos", "80x70 \"GRACIAS\" Verde", 0, "80X70"],
+  ["SKU000091", "80x70_Gracias_Rojo", "Rollos Térmicos", "80x70 \"GRACIAS\" Rojo", 0, "80X70"],
+  ["SKU000092", "80x70_Gracias_Azul", "Rollos Térmicos", "80x70 \"GRACIAS\" Azul", 0, "80X70"],
+  ["SKU000093", "80x70_Gracias_Morado", "Rollos Térmicos", "80x70 \"GRACIAS\" Morado", 0, "80X70"],
+  ["SKU000094", "80x70_Cantaritos_Amarillo", "Rollos Térmicos", "80x70 ESPECIAL CANTARITOS Amarillo", 0, "80X70"],
+  ["SKU000095", "80x70_Cantaritos_Azul", "Rollos Térmicos", "80x70 ESPECIAL CANTARITOS Azul", 0, "80X70"],
+  ["SKU000096", "80x70_Cantaritos_Rosa", "Rollos Térmicos", "80x70 ESPECIAL CANTARITOS Rosa", 0, "80X70"],
+  ["SKU000097", "Sobres", "Material Empaque", "Sobres Amarillos", 0, null],
+  ["SKU000098", "Poliolefina", "Material Empaque", "Poliolefina", 0, null],
+  ["SKU000099", "Playo", "Material Empaque", "PLAYO NEGRO", 0, null],
+  ["SKU000100", "Playo", "Material Empaque", "Playo Grande", 0, null],
+  ["SKU000101", "Playo", "Material Empaque", "Playo Chico", 0, null],
+  ["SKU000102", "Etiqueta INKO Grande", "Material Empaque", "ETIQUETA IMPRESA AZUL INKO 61x252mm", 0, null],
+  ["SKU000103", "Etiqueta INKO Cinta", "Material Empaque", "ETIQUETA IMPRESA AZUL INKO 4X6", 0, null],
+  ["SKU000104", "Despachadores", "Material Empaque", "Despachadores", 0, null],
+  ["SKU000105", "Cutters", "Material Empaque", "Cutters", 0, null],
+  ["SKU000106", "Cinta Transp", "Material Empaque", "Cinta Transparente", 0, null],
+  ["SKU000107", "Cinta Impresa INKO", "Material Empaque", "Cintas Impresas INKO", 0, null],
+  ["SKU000108", "Cinta Can", "Material Empaque", "Cinta Canela", 0, null],
+  ["SKU000109", "RM90", "Cajas", "Caja RM90", 0, null],
+  ["SKU000110", "RM88", "Cajas", "Caja RM88", 0, null],
+  ["SKU000111", "RM85", "Cajas", "Caja RM85", 0, null],
+  ["SKU000112", "RM68", "Cajas", "Caja RM68", 0, null],
+  ["SKU000113", "RM51", "Cajas", "Caja RM51", 0, null],
+  ["SKU000114", "RM30", "Cajas", "CAJA RM30", 0, null],
+  ["SKU000115", "RM28", "Cajas", "Caja RM28", 0, null],
+  ["SKU000116", "RM27", "Cajas", "Caja RM27", 0, null],
+  ["SKU000117", "RM202", "Cajas", "Caja RM202", 0, null],
+  ["SKU000118", "Proveedor 80x80", "Cajas", "Caja Proveedor 80x80", 0, null],
+  ["SKU000119", "Proveedor 57x60", "Cajas", "Caja Proveedor 57x60", 0, null],
+  ["SKU000120", "Proveedor 57x40", "Cajas", "Caja Proveedor 57x40", 0, null],
+  ["SKU000121", "Master", "Cajas", "Caja Master", 0, null],
+];
+
+// La hoja SKU X MODELO: qué publicación de Mercado Libre o Amazon corresponde
+// a qué modelo y cuántas unidades lleva cada una. Es lo que convierte los
+// pedidos de la ODT en unidades de material.
+const PUBLICACIONES = [
+  ["TDFV66710", "62mm", "Rollo De Etiquetas Brother Dk2205 Ql700 Ql800 62mm 30 Mts", 1],
+  ["VAIN24138", "62mm", "10 Rollos Etiquetas Brother Dk2205 Ql700 Ql800 62mm 30 Mts", 10],
+  ["PUCU24753", "62mm", "20 Rollos Etiquetas Brother Dk2205 Ql700 Ql800 62mm 30 Mts", 20],
+  ["NQBB07219", "62mm", "01 Rollo Etiqueta Inko Compatible Con Brother Dk2205 62mm", 1],
+  ["HGGR07274", "62mm", "05 Rollos Etiqueta Inko Compatible Con Brother Dk2205 62mm", 5],
+  ["LHJC07363", "62mm", "10 Rollos Etiqueta Inko Compatible Con Brother Dk2205 62mm", 10],
+  ["DQWD07699", "62mm", "20 Rollos Etiqueta Inko Compatible Con Brother Dk2205 62mm", 20],
+  ["VKGQ07773", "62mm", "40 Rollos Etiqueta Inko Compatible Con Brother Dk2205 62mm", 40],
+  ["BYQJ07725", "62mm", "50 Rollos Etiqueta Inko Compatible Con Brother Dk2205 62mm", 50],
+  ["NTMU07702", "62mm", "10 Rollos Etiqueta + Portarollo Compatible C/ Brother Dk2205", 10],
+  ["XOQC09915", "62mm Plastica", "Rollo Etiqueta Plastificada Brother Dk2205 Ql800 Ql810 62mm", 1],
+  ["NVBS01925", "Portarollo DK2205", "Dk2205 Porta Rollo Base Rodillo Para Etiqueta Brother 62mm", 1],
+  ["NA", "Portarollo", "Manual Dk2205 Porta Base Rodillo Para Etiqueta Brother 62mm", 1],
+  ["JMQF49921", "62mm Amarillo", "Dk2205 Rollo De Etiqueta Brother 62mm Amarillo P/ql700 Ql500", 1],
+  ["FQUH07675", "62mm Amarillo", "01 Rollo De Etiqueta Amarillo Compatible Con Brother Dk2205", 1],
+  ["DEVR10493", "62mm Amarillo", "10 Rollo De Etiqueta Amarillo Compatible Con Brother Dk2205", 10],
+  ["NBKY52175", "62mm Verde", "Rollo Etiqueta Brother 62mmx30mt Color Verde Ql800 Ql500", 1],
+  ["ZXJO07578", "62mm Verde", "01 Rollo De Etiqueta Verde Compatible Con Brother Dk2205", 1],
+  ["FWTJ10312", "62mm Verde", "10 Rollo De Etiqueta Verde Compatible Con Brother Dk2205", 10],
+  ["IXGP82640", "29mm", "Ql800 Ql700 Ql500 Dk2210 Rollo Etiqueta Brother 29mm 30 Mts", 1],
+  ["RQIO41883", "29mm", "Ql700 Ql500 Dk2210 Rollo De Etiqueta Brother 29mm 30 Mts", 1],
+  ["TSVR24309", "29mm", "10 Rollos Ql700 Ql500 Dk2210 Etiqueta Brother 29mm 30 Mts", 10],
+  ["TDFP31586", "29mm", "20 Rollos Ql700 Ql500 Ql800 Dk2210 Etiqueta Brother 29mm", 20],
+  ["IGVI07328", "29mm", "01 Rollo Etiquetas Inko Compatible Con Brother Dk2210 29mm", 1],
+  ["GDEQ10019", "29mm", "05 Rollos Etiqueta Inko Compatible Con Brother Dk2210 29mm", 5],
+  ["OMSQ73498", "29mm", "10 Rollos Etiqueta Inko Compatible Con Brother Dk2210 29mm", 10],
+  ["RFKJ53660", "29mm", "10 Rollos Etiqueta Inko Con Portarollo Para Brother Dk2210", 10],
+  ["GTBO07363", "29mm", "20 Rollos Etiqueta Inko Compatible Con Brother Dk2210 29mm", 20],
+  ["AJZG10163", "29mm", "40 Rollos Etiqueta Inko Compatible Con Brother Dk2210 29mm", 40],
+  ["VGBX01987", "Portarollo DK2210", "Dk2210 Porta Rollo Base Rodillo Para Etiqueta Brother 29mm", 1],
+  ["CRMK76945", "17x54mm", "Dk1204 Rollo Etiquetas Brother 17x54mm Ql800 Ql810 Ql700", 1],
+  ["NMMT76909", "17x54mm", "Dk1204 - 05 Rollos Etiquetas Brother Ql800 Ql810 Ql700", 5],
+  ["FFTO76295", "17x54mm", "10 Rollos Etiqueta Dk1204 Brother Ql800 Ql810 Ql700", 10],
+  ["ZSIA52229", "17x54mm", "01 Rollo Etiquetas Inko Compatible Con Brother Dk1204 400et", 1],
+  ["YMGZ13560", "17x54mm", "05 Rollos Etiqueta Inko Compatible Con Brother Dk1204 400et", 5],
+  ["YQNT52666", "17x54mm", "10 Rollos Etiqueta Inko Compatible Con Brother Dk1204 400et", 10],
+  ["INEV09700", "17x54mm", "20 Rollos Etiqueta Inko Compatible Con Brother Dk1204 400et", 20],
+  ["UWGO51352", "Portarollo DK1204", "Dk1204 Porta Rollo Base Rodillo Etiqueta Brother 17x54 Mm", 1],
+  ["OLKY93092", "DK1201", "01 Rollos Etiqueta Compatible Brother Dk1201 29x90 Mm Ql800", 1],
+  ["FKKL91493", "DK1201", "03 Rollos Etiqueta Compatible Brother Dk1201 29x90 Mm Ql800", 3],
+  ["EEIX92584", "DK1201", "05 Rollos Etiquetas Compatible Brother Dk1201 29x90 Mm Ql800", 5],
+  ["GQXG92566", "DK1201", "10 Rollos Etiquetas Compatible Brother Dk1201 29x90 Mm Ql800", 10],
+  ["HRBX91493", "DK1201", "20 Rollos Etiquetas Compatible Brother Dk1201 29x90 Mm Ql800", 20],
+  ["UPPG93139", "DK1201", "10 Rollos Dk1201 Compatible Brother 29x90 Incluye Portarollo", 10],
+  ["UIDX93187", "Portarollo DK1201", "Dk1201 Porta Rollo Base Rodillo Etiqueta Brother 29x90 Mm", 1],
+  ["PSGE91159", "22x16", "01 Rollo Etiqueta Térmica 22x16 Mm 1000 Et Cod Barras Precio", 1],
+  ["GQXG90557", "22x16", "02 Rollo Etiqueta Térmica 22x16 Mm 1000 Et Cod Barras Precio", 2],
+  ["QWRW90519", "22x16", "05 Rollo Etiqueta Térmica 22x16 Mm 1000 Et Cod Barras Precio", 5],
+  ["KYPB92597", "22x16", "10 Rollo Etiqueta Térmica 22x16 Mm 1000 Et Cod Barras Precio", 10],
+  ["OOIS42679", "38x25", "Etiquetas Térmicas Directas Rollo Con 1000 Etiquetas 38x25mm", 1],
+  ["KZPN84556", "38x25", "05 Rollos Etiquetas Termicas 38x25 Mm 4x2.5 Cm C/1000 Full", 5],
+  ["UVNJ98738", "38x25", "10 Rollos Etiquetas Térmicas Directas 1000 38x25mm Xprinter", 10],
+  ["FRPG47969", "38x25", "20 Rollos Etiquetas Térmicas Directas 1000 38x25mm Xprinter", 20],
+  ["NA", "38x25", "100 Rollos Etiquetas Térmicas Directas 1000 38x25mm Xprinter", 100],
+  ["FZUN44079", "38x25", "10 Rollos Etiquetas Térmicas 38x25mm Xprinter", 10],
+  ["JICW43456", "38x25", "10 Rollos Etiquetas Térmicas Directas 1000 38x25mm Xprinter", 10],
+  ["YYGD10057", "38x25 Rojo", "Etiqueta Térmica Roja 38x25 Mm (4x2.5 Cm) C/1000 Etiquetas", 1],
+  ["WMCU02949", "38x25 Naranja", "01 Rollos Etiqueta Térmica Naranja 38x25 Mm C/1000 Etiq C/u", 1],
+  ["CNIA02730", "38x25 Naranja", "10 Rollos Etiqueta Térmica Naranja 38x25 Mm C/1000 Etiq C/u", 10],
+  ["PBNO02776", "38x25 Amarillo", "Etiqueta Térmica Amarilla 38x25 Mm C/1000 Etiquetas", 1],
+  ["MJBA89902", "38x25 Amarillo", "10 Rollos Etiqueta Térmica Amarilla 38x25 Mm C/1000 Etiq C/u", 10],
+  ["PVUS88976", "38x25 Verde", "10 Rollos Etiqueta Térmica Verde 38x25 Mm C/1000", 10],
+  ["VWIS30043", "51x25", "Etiqueta De Transferencia Térmica 51 Mm X 25 Mm (2 X 1 )", 1],
+  ["ABZA41395", "51x25", "Etiqueta Termica Directa 2x1 , 51x25 Mm 1000 Por Rollo", 1],
+  ["UWHQ82542", "51x25", "05 Rollos Etiqueta Térmica 51x25 Mm 2x1 Pulgadas 1,000 C/u", 5],
+  ["CTFZ99103", "51x25", "10 Rollos Etiqueta Termica Directa 2x1 O 51x25 Mm 1000 C/r", 10],
+  ["OOBI88440", "51x25", "20 Rollos Etiqueta Termica Directa 2x1 O 51x25 Mm 1000 C/r", 20],
+  ["HAKS10116", "51x25 Plastica", "2 Rollos Etiqueta Térmica Directa Plástica 51x25 2x1 1000c/r", 2],
+  ["CJZQ10128", "51x25 Plastica", "03 Rollos Etiqueta Térmica Directa Plástica 51x25 2x1 PuLG", 3],
+  ["LUHT09716", "51x25 Plastica", "05 Rollos Etiqueta Térmica Plástica 51x25 2x1 Plastificada", 5],
+  ["EADY87569", "51x25 Amarilla", "10 Rollos Etiqueta Térmica Amarilla 51x25mm 2x1 PLG C/1000", 10],
+  ["VOOO07183", "51x25 Amarilla", "05 Rollos Etiqueta Térmica Amarilla 51x25mm 2x1 PLG C/1000", 5],
+  ["HONJ87621", "51x25 Amarilla", "Etiqueta Térmica Amarilla 51x25mm 2x1 PLG C/1000 Etiq C/roll", 1],
+  ["YZRO87839", "51x25 Naranja", "10 Rollos Etiqueta Térmica Naranja 51x25mm 2x1 PLG C/1000", 10],
+  ["IDJD06323", "51x25 Naranja", "05 Rollos Etiqueta Térmica Naranja 51x25mm 2x1 PLG C/1000", 5],
+  ["QORL06436", "51x25 Naranja", "01 Rollos Etiqueta Térmica Naranja 51x25mm 2x1 PLG C/1000", 1],
+  ["BGCR06525", "51x25 Verde", "01 Rollos Etiqueta Térmica Verde 51x25mm 2x1 PLG C/1000", 1],
+  ["YTRE07080", "51x25 Verde", "05 Rollos Etiqueta Térmica Verde 51x25mm 2x1 PLG C/1000", 5],
+  ["VSHJ06692", "51x25 Verde", "10 Rollos Etiqueta Térmica Verde 51x25mm 2x1 PLG C/1000", 10],
+  ["UGNQ20012", "57x40 eti", "Etiqueta Para Bascula 57x40 Mm Térmica Rollo C/1000 Pz C1.5", 1],
+  ["XVVA20737", "57x40 eti", "05 Rollos Etiqueta Para Bascula 57x40 Mm Térmica C/1000", 5],
+  ["ICQC19923", "57x40 eti", "10 Rollos Etiqueta Para Bascula 57x40 Mm Térmica C/1000", 10],
+  ["MTDI84967", "3x1\"", "5 Rollos Etiqueta Térmica 3x1 76x25 Mm 1000 Et Prod Precio", 5],
+  ["AHBP86043", "3x1\"", "10 Rollos Etiqueta Térmica 3x1 76x25 Mm 1000et Prod Precio", 10],
+  ["ZLLG85749", "3x1\"", "1 Rollo Etiqueta Térmica 3x1 76x25 Mm 1000 Etq Prod Precio", 1],
+  ["XGSP85187", "3x1\"", "2 Rollos Etiqueta Térmica 3x1 76x25 Mm 1000 Et Prod Precio", 2],
+  ["UBQC79534", "75x51", "Etiqueta Térmica 8x5 Mercado Full Envíos", 1],
+  ["YLXH77646", "75x51", "Etiquetas Caja Mercado Envíos Full 8x5 Cm Xp-450b 76x51", 1],
+  ["AZVM17658", "75x51", "10 Rollos Etiquetas Envíos Full 76x51 Xp-450b 8x5 Cm Xprint", 10],
+  ["IJUH79942", "75x51", "10 R - Etiquetas Térmica Directa 76mm X 51mm 3 X 2 Xprinter", 10],
+  ["OENP89653", "4x1\"", "1 Rollos Etiqueta Térmica 4x1\" 102x25 mm 2500 etq Cod Barras", 1],
+  ["KRCC90170", "4x1\"", "2 Rollos Etiqueta Térmica 4x1\" 102x25 mm 2500 etq Cod Barras", 2],
+  ["WUXE88331", "4x1\"", "5 Rollos Etiqueta Térmica 4x1\" 102x25 mm 2500 etq Cod Barras", 5],
+  ["VASC90324", "4x1\"", "10 Rollos Etiqueta Térmica 4x1\" 102x25 mm 2500 et Cod Barras", 10],
+  ["CWSN87147", "4x2\"", "1 Rollo Etiqueta Térmica 4x2 \" 102x51 mm 1500etq Precio Full", 1],
+  ["ZZFU87943", "4x2\"", "2 Rollos Etiqueta Térmica 4x2 \" 102x51 mm 1500et Precio Full", 2],
+  ["YETP87031", "4x2\"", "5 Rollos Etiqueta Térmica 4x2 \" 102x51 mm 1500et Precio Full", 5],
+  ["OAQT86378", "4x2\"", "10 Rollos Etiqueta Térmica 4x2 \" 102x51 mm 1500et Precio Full", 10],
+  ["IQUP85490", "4x3\"", "1 Rollo Etiqueta Térmica 4x3 - 102x76 mm 1,000 cu Envio Full", 1],
+  ["DJFQ86912", "4x3\"", "2 Rollos Etiqueta Térmica 4x3 - 102x76 mm 1000 cu Envio Full", 2],
+  ["SVHV85852", "4x3\"", "5 Rollos Etiqueta Térmica 4x3 - 102x76 mm 1000 cu Envio Full", 5],
+  ["ICPL87498", "4x3\"", "10 Rollos Etiqueta Térmica 4x3 102x76 mm 1000 cu Envio Full", 10],
+  ["LQOB88128", "4x4\"", "01 Rollo Etiqueta Térmica 4x4 102x102 mm 500 c/u Envio Full", 1],
+  ["JEBC88558", "4x4\"", "02 Rollo Etiqueta Térmica 4x4 102x102 mm 500 c/u Envio Full", 2],
+  ["TAGJ86494", "4x4\"", "05 Rollo Etiqueta Térmica 4x4 102x102 mm 500 c/u Envio Full", 5],
+  ["GOFL87785", "4x4\"", "10 Rollo Etiqueta Térmica 4x4 102x102 mm 500 c/u Envio Full", 10],
+  ["CZMB70372", "4x1\"_AMA", "1 Rollos Etiqueta Térmica Amarilla 4x1\" 102x25 mm 2,500 etq", 1],
+  ["PGQY70695", "4x2\"_AMA", "1 Rollo Etiqueta Térmica Amarilla 4x2\" - 102x51 mm 1,500etq", 1],
+  ["XJTD70653", "4x3\"_AMA", "1 Rollo Etiqueta Térmica Amarilla 4x3\" - 102x76 mm 1,000etq", 1],
+  ["BRCH70533", "4x4\"_AMA", "1 Rollo Etiqueta Térmica Amarilla 4x4\" - 102x102 mm 500etq", 1],
+  ["GNRT35985", "4x6\"", "Etiquetas Térmicas Directas Rollo Con 200 Etiquetas 4x6 In", 1],
+  ["HHKU36453", "4x6\"", "5 Rollos De Etiqueta Termica Mercado Envios 4x6 Pul 200 C/u", 5],
+  ["OOQV72897", "4x6_Rojo", "Etiquetas Térmicas Directas Rollo Con 200 Etiquetas 4x6 In", 1],
+  ["ZUNA73272", "4x6_Amarillo", "Etiquetas Térmicas Directas Rollo Con 200 Etiquetas 4x6 In", 1],
+  ["NZUM73374", "4x6_Rosa", "Etiquetas Térmicas Directas Rollo Con 200 Etiquetas 4x6 In", 1],
+  ["VHQI71371", "4x6_Verde", "Etiquetas Térmicas Directas Rollo Con 200 Etiquetas 4x6 In", 1],
+  ["QWRL71371", "4x6_Naranja", "Etiquetas Térmicas Directas Rollo Con 200 Etiquetas 4x6 In", 1],
+  ["PUCU63454", "4x8\"", "Etiquetas Térmicas Directas Rollo Con 200 Etiquetas 4x8 In", 1],
+  ["TJRU46547", "4x8\"", "Etiquetas Térmicas 4x8 Agencias Mercado Libre Punto Envio", 1],
+  ["KCDY65707", "4x8\"", "Etiqueta Térmica 4x8 Agencias Mercado Libre C/precorte 200", 1],
+  ["PROW78846", "4x8\"", "Etiqueta 4x8 Térmica Directa Guía Paquetería Xprinter Oki", 1],
+  ["ENML63676", "4x8\"", "5 Rollos De Etiqueta Termica Mercado Envios 4x8 Pul 200 C/u", 5],
+  ["LBLU88019", "4x8\"", "9 Rollos Etiqueta Térmica Mercado Envios 4x8 200 Etq Paquete", 9],
+  ["WSNO89052", "4x8\"", "9 Rollos Etiqueta Térmica Mercado Envios 4x8 200 Etq Agencia", 9],
+  ["GTBF87569", "4x8\"", "10 Rollos Etiqueta Térmica Mercado Envios 4x8 200 Etq Paquet", 10],
+  ["MOPJ96763", "4x8\"", "10 Rollos De Etiqueta Térmica Mercado Envios 4x8 Pul 200 C/u", 10],
+  ["KRLF87342", "40x30 Mini Plastica", "10 Rollos Etiqueta Plastica 40x30 Compatible Phomemo Peripa", 10],
+  ["WSLF87065", "40x30 Mini Plastica", "5 Rollos Etiqueta Plastica 40x30mm Compatible Phomemo Peripa", 5],
+  ["YHZE88171", "40x30 Mini Plastica", "Rollo Etiqueta Plastica 40x30mm Compatible Phomemo Peripage", 1],
+  ["KGOI85555", "40x30 Mini Plastica", "2 Rollos Etiqueta Plastica 40x30mm Compatible Phomemo Peripa", 2],
+  ["ZZRV71482", "40x30", "10 Rollos De Etiquetas Térmicas Para Productos Full 40x30 Mm", 10],
+  ["GKVU79534", "40x30", "Rollo Etiqueta Térmica Para Productos Full 40x30 Mm Oficial", 1],
+  ["PZMA71794", "40x30", "6 Rollos De Etiquetas Térmicas Para Productos Full 40x30 Mm", 6],
+  ["ZZGN81389", "40x30", "Etiquetas Térmicas Para Producto Full 40 X 30 Mm Oficiales", 1],
+  ["YHYR25279", "57x30 Blanco Label", "3 Rollos Térmicos Etiqueta 58mm Peripage A6 Impresora 57x30", 3],
+  ["NA", "57x30 Blanco Label", "100 Rollos Térmicos Etiqueta Peripage A6 Impresora 57x30", 100],
+  ["NA", "57x30 Blanco Label", "200 Rollos Térmicos Etiqueta Peripage A6 Impresora 57x30", 200],
+  ["PHTB24782", "57x30 Azul Label", "3 Rollos Térmicos Etiqueta Peripage A6 Impresora 57x30 58mm", 3],
+  ["IXXY09595", "Cola Rata", "Etiqueta Plástica Térmica Directa Cola Rata Joyería 63x22mm", 1],
+  ["JWVS10694", "Cola Rata", "05 Rollos Etiqueta Cola Rata Plástica Térmica Directa", 5],
+  ["DURD10417", "Cola Rata", "10 Rollos Etiqueta Cola Rata Plástica Térmica Directa", 10],
+  ["NFZX85984", "Circulo Blanco 51x51", "1 Rollo Etiqueta Térmica Blanco Circulo 51x51 mm 750 et Logo", 1],
+  ["DMFW86043", "Circulo Blanco 51x51", "2 Rollos Etiqueta Térmica Blanco Circulo 51x51 750 cu Logo", 2],
+  ["VGHB87096", "Circulo Blanco 51x51", "5 Rollos Etiqueta Térmica Blanco Circulo 51x51 750 cu Logo", 5],
+  ["PLFF86851", "Circulo Blanco 51x51", "10 Rollos Etiqueta Térmica Blanco Circulo 51x51 750 cu Logo", 10],
+  ["KNHG86833", "Circulo Rojo 51x51", "1 Rollo Etiqueta Térmica Circulo Rojo 51x51 Mm Oferta Fragil", 1],
+  ["XKTM85282", "Circulo Rojo 51x51", "2 Rollo Etiqueta Térmica Circulo Rojo 51x51 Mm Oferta Fragil", 2],
+  ["KUXP85207", "Circulo Rojo 51x51", "5 Rollo Etiqueta Térmica Circulo Rojo 51x51 Mm Oferta Fragil", 5],
+  ["CHKF86384", "Circulo Rojo 51x51", "10 Rollo Etiqueta Térmica Circulo Rojo 51x51 Oferta Fragil", 10],
+  ["XUQC87008", "Circulo Verde 51x51", "1 Rollo Etiqueta Térmica Circulo Verde 51x51 mm 750 Logo Eco", 1],
+  ["NSXF86661", "Circulo Verde 51x51", "2 Rollo Etiqueta Térmica Circulo Verde 51x51 mm 750 Logo Eco", 2],
+  ["ECQE86626", "Circulo Verde 51x51", "5 Rollo Etiqueta Térmica Circulo Verde 51x51 mm 750 Logo Eco", 5],
+  ["DMQG86619", "Circulo Verde 51x51", "10 Rollo Etiqueta Térmica Circulo Verde 51x51 750 Logo Eco", 10],
+  ["TRGL22461", "Circulo Azul 51x51", "01 Rollo Etiqueta Térmica Circulo Azul 51x51 Mm 750 Logotipo", 1],
+  ["JEQH09106", "Circulo Azul 51x51", "2 Rollos Etiqueta Térmica Circulo Azul 51x51 Mm 750 Logotipo", 2],
+  ["WSVS21599", "Circulo Azul 51x51", "5 Rollos Etiqueta Térmica Circulo Azul 51x51 Mm 750 Logotipo", 5],
+  ["SPFJ23033", "Circulo Azul 51x51", "10 Rollos Etiqueta Térmica Circulo Azul 51x51 Mm 750 Logotip", 10],
+  ["TRHP70364", "Circulo Lila 51x51", "01 Rollo Etiqueta Térmica Circulo Lila 51x51 Mm 750 Etiq", 1],
+  ["ZBTN71940", "Circulo Lila 51x51", "2 Rollo Etiqueta Térmica Circulo Lila 51x51 Mm 750 Etiq", 2],
+  ["HQNK70859", "Circulo Azul Fuerte 51x51", "1 Rollo Etiqueta Térmica Circulo Azul F 51x51 Mm 750 Etiq", 1],
+  ["ORGZ72222", "Circulo Azul Fuerte 51x51", "2 Rollo Etiqueta Térmica Circulo Azul F 51x51 Mm 750 Etiq", 2],
+  ["DSFG70355", "Circulo Rosa 51x51", "01 Rollo Etiqueta Térmica Circulo Rosa 51x51 Mm 750 Etiq", 1],
+  ["AFOV70317", "Circulo Rosa 51x51", "2 Rollos Etiqueta Térmica Circulo Rosa 51x51 Mm 750 Etiq", 2],
+  ["SGMT71385", "Circulo Naranja 51x51", "1 Rollo Etiqueta Térmica Circulo Naranja 51x51 Mm 750 Etiq", 1],
+  ["XRGA70892", "Circulo Naranja 51x51", "02 Rollo Etiqueta Térmica Circulo Naranja 51x51 Mm 750 Etiq", 2],
+  ["EZBV03481", "57x30 Blanco Roll", "Rollos Papel Peripage A6 10 57x30 Blan Impresora Inalámbrica", 10],
+  ["NA", "57x30 Blanco Roll", "200 Rollos Papel Termico 57x30 58mm Qiubo Xprinter Miniprint", 200],
+  ["EBQA03218", "57x30 Azul Roll", "10 Rollos Papel Peripage 57x30 Azul Impresora Inalámbrica", 10],
+  ["MFAT09684", "57x30 Amarillo Roll", "10 Rollos Papel Térmico Amarillo Peripage57x30 Goojprt", 10],
+  ["OASH03512", "57x30 Rosa Roll", "Rollos Papel Peripage A6 10 57x30 Rosa Impresora Inalámbrica", 10],
+  ["UBQC01669", "57x40", "10 Rollos Papel Termico Miniprinter 57x40 ( Impresora 58mm", 10],
+  ["WWAK09825", "57x40", "10 Rollos Impresora Clip Total Mercado Point Smart", 10],
+  ["QECH01844", "57x40", "20 Rollos Papel Termico Miniprinter 57x40mm (impresora 57mm)", 20],
+  ["ERRC31691", "57x40", "50 Rollos Papel Termico Miniprinter 57x40 Impresora 58mm Xprinter", 50],
+  ["YWGV32030", "57x40", "100 Rollos Papel Termico Miniprinter 57x40 (impresora 58mm)", 100],
+  ["TQZZ96433", "57x40", "50 Rollos Papel Termico 57x40 58mm Xprinter CLIP SICAR", 50],
+  ["QXIR94925", "57x40", "200 Rollos Papel Termico Miniprinter 57x40 (impresora 58mm)", 200],
+  ["FFIA66493", "57x40", "250 Rollos Papel Termico 57x40 58mm Qiubo Xprinter Miniprint", 250],
+  ["NA", "57x40", "500 Rollos Papel Térmico Miniprinter 57x40 (impresora 58mm)", 500],
+  ["VSCV74722", "57x40_Azul", "10 Rollos Papel Termico Azul 57x40 recibo terminal ticket 58", 10],
+  ["OXCT74561", "57x40_Azul", "50 Rollos Papel Termico Azul 57x40 recibo terminal ticket 58", 50],
+  ["UXLM74746", "57x40_Amarillo", "10 Rollos Papel Termico Amarillo 57x40 recibo terminal TPV58", 10],
+  ["PNBB75399", "57x40_Amarillo", "50 Rollos Papel Termico Amarillo 57x40 recibo terminal TPV58", 50],
+  ["IZUU74798", "57x40_Morado", "10 Rollos Papel Termico Morado 57x40 recibo terminal ticket", 10],
+  ["RXSP75616", "57x40_Morado", "50 Rollos Papel Termico Morado 57x40 recibo terminal TPV58", 50],
+  ["NNHZ74693", "57x40_Naranja", "10 Rollos Papel Termico Naranja 57x40 recibo terminal TPV 58", 10],
+  ["GFLW74820", "57x40_Naranja", "50 Rollos Papel Termico Naranja 57x40 recibo terminal TPV 58", 50],
+  ["IEMJ75895", "57x40_Rosa", "10 Rollos Papel Termico Rosa 57x40 recibo terminal ticket 58", 10],
+  ["SJYP75436", "57x40_Rosa", "50 Rollos Papel Termico Rosa 57x40 recibo terminal ticket 58", 50],
+  ["SCOC74693", "57x40_Verde", "10 Rollos Papel Termico Verde 57x40 recibo terminal TPV 58", 10],
+  ["SWOH75766", "57x40_Verde", "50 Rollos Papel Termico Verde 57x40 recibo terminal ticket58", 50],
+  ["KZRU58030", "57x45", "30 Rollos Térmicos 57x45 Miniprinter Impresora 58mm", 30],
+  ["XYMW57191", "57x45", "60 Rollos Térmicos 57x45 Miniprinter Impresora 58mm", 60],
+  ["LSMX46789", "57x45", "100 Rollos Térmicos 57x45 Miniprinter Impresora 58mm", 100],
+  ["NTXC24954", "57x45", "184 Rollos Térmicos 57x45 Miniprinter Impresora 58mm", 184],
+  ["NQUG13458", "57x60", "50 Rollos Térmicos 57x60 Impresora 58mm Iva Incluido", 50],
+  ["QLVX12987", "57x60", "100 Rollos Térmicos 57x60 Impresora 58mm Miniprinter", 100],
+  ["KGXH77315", "57x60", "10 Rollos Térmicos 57x60 Impresora 58mm Miniprinter", 10],
+  ["WUBZ77423", "57x60", "20 Rollos Térmicos 57x60 Impresora 58mm Miniprinter", 20],
+  ["XRMV86043", "80x50", "10 Rollos Papel Térmico 80x50 Impresora 80mm Negro Zebra", 10],
+  ["KLPT04280", "80x50", "50 Rollos Papel Térmico 80x50 Impresora 80mm Negro Zebra", 50],
+  ["QNNU04618", "80x50", "100 Rollos Papel Térmico 80x50 Impresora 80mm Negro Zebra", 100],
+  ["IXKP83200", "80x70", "05 Rollos Papel Térmico 80x70 Impresora 80mm Negro Con Iva", 5],
+  ["RJOI17000", "80x70", "10 Rollos Papel Térmico 80x70 Impresora 80mm Ticket Con Iva", 10],
+  ["DGBX76314", "80x70", "20 Rollos Papel Térmico 80x70 Impresora 80mm Negro Con Iva", 20],
+  ["JFCQ46271", "80x70", "24 Rollos Papel Térmico 80x70 Impresora 80mm Con Iva", 24],
+  ["KHBC76670", "80x70", "50 Rollos Papel Térmico 80x70 Impresora 80mm / Iva Incluido", 50],
+  ["EKYN32696", "80x70", "50 Rollos Papel Térmico 80x70 Impresora 80mm Negro Con Iva", 50],
+  ["MCXA84375", "80x70", "50 Rollos Papel Térmico 80x70mm Impresora 80mm Negro Epson", 50],
+  ["XMJA48123", "80x70", "50 Rollos Papel Térmico 80x70 Mm Impresora Negro Bixolon", 50],
+  ["NLLQ82693", "80x70", "Inko 50 Rollos De Papel Térmico 80x70mm Negro Impresora 80mm", 50],
+  ["VEZW34433", "80x70", "100 Rollos Papel Térmico 80x70 Impresora 80mm Negro Con Iva", 100],
+  ["NA", "80x70", "150 Rollos Papel Térmico 80x70 Impresora 80mm Con Iva", 150],
+  ["QKHT01682", "80x80", "08 Rollos Ticket Papel Térmico 80x80 Mm Epson Inko", 8],
+  ["SWAE47417", "80x80", "20 Rollos Papel Térmico 80x80 Mm Por Rollo Epson", 20],
+  ["TMRB78425", "80x80", "40 Rollos Papel Térmico 80x80 Mm $24.5 Por Rollo Epson", 40],
+  ["BQPD64712", "80x80", "75 Rollos Ticket Papel Térmico 80x80 Mm Epson", 75],
+  ["SGXX98512", "80x70_ Color_Rosa", "5 Rollos Papel Térmico 80x70 Color Rosa Impresora 80mm", 5],
+  ["KMXR98499", "80x70_ Color_Rosa", "10 Rollos Papel Térmico 80x70 Color Rosa Impresora 80mm", 10],
+  ["IVED98468", "80x70_ Color_Rosa", "20 Rollos Papel Térmico 80x70 Color Rosa Impresora 80mm", 20],
+  ["HBIU97070", "80x70_ Color_Rosa", "50 Rollos Papel Térmico 80x70 Color Rosa Impresora 80mm", 50],
+  ["XUDN98499", "80x70_ Color_Verde", "5 Rollos Papel Térmico 80x70 Color Verde Impresora 80mm", 5],
+  ["JSMB96700", "80x70_ Color_Verde", "10 Rollos Papel Térmico 80x70 Color Verde Impresora 80mm", 10],
+  ["WGDP96632", "80x70_ Color_Verde", "20 Rollos Papel Térmico 80x70 Color Verde Impresora 80mm", 20],
+  ["QJAH99038", "80x70_ Color_Verde", "50 Rollos Papel Térmico 80x70 Color Verde Impresora 80mm", 50],
+  ["PZTE02711", "80x70_ Color_Amarillo", "5 Rollos Papel Térmico 80x70 Color Amarillo Impresora 80mm", 5],
+  ["GGYP97879", "80x70_ Color_Amarillo", "10 Rollos Papel Térmico 80x70 Color Amarillo Impresora 80mm", 10],
+  ["NDVE97983", "80x70_ Color_Amarillo", "20 Rollos Papel Térmico 80x70 Color Amarillo Impresora 80mm", 20],
+  ["VVKP02603", "80x70_ Color_Amarillo", "50 Rollos Papel Térmico 80x70 Color Amarillo Impresora 80mm", 50],
+  ["UIDX99220", "80x70_ Color_Azul", "5 Rollos Papel Térmico 80x70 Color Azul Impresora 80mm", 5],
+  ["JKAR97206", "80x70_ Color_Azul", "10 Rollos Papel Térmico 80x70 Color Azul Impresora 80mm", 10],
+  ["TIJZ98874", "80x70_ Color_Azul", "20 Rollos Papel Térmico 80x70 Color Azul Impresora 80mm", 20],
+  ["TSFE98992", "80x70_ Color_Azul", "50 Rollos Papel Térmico 80x70 Color Azul Impresora 80mm", 50],
+  ["GODI71067", "80x70_Color_Naranj", "10 Rollos Papel Térmico 80x70 Color Naranja Impresora 80mm", 10],
+  ["QGZG71699", "80x70_Color_Lila", "10 Rollos Papel Térmico 80x70 Color Lila Impresora 80mm", 10],
+  ["TXKF70317", "80x70_Color_Colores", "06 Rollos Papel Térmico 80x70 Colores Impresora 80mm", 6],
+  ["B07KSP8M11", "80x70", "50 Rollos Papel Térmico 80x70 Impresora 80mm Negro Con Iva", 50],
+  ["B07KSPPQDP", "80x70", "24 Rollos Papel Térmico 80x70 Impresora 80mm Con Iva", 24],
+  ["B07KSR1K1R", "80x70", "10 rollos Termicos 80x70", 10],
+  ["B0CST6TJHH", "80x70", "100 Rollos Papel Térmico 80x70 mm", 100],
+  ["B0CST714KP", "80x70_ Color_Azul", "10 Rollos Papel Térmico 80x70 mm Color Azul Impresora 80mm", 10],
+  ["B0CST7HK2V", "80x70_ Color_Azul", "20 Rollos Papel Térmico 80x70 mm Color Azul Impresora 80mm", 20],
+  ["B0CST8291P", "80x70_ Color_Amarillo", "20 Rollos Papel Térmico 80x70 mm Color amarillo Impresora 80mm", 20],
+  ["B0CST773V2", "80x70_ Color_Verde", "10 Rollos Papel Térmico 80x70 mm Color Verde Impresora 80mm", 10],
+  ["B0CST5Z1M8", "80x70_ Color_Verde", "20 Rollos Papel Térmico 80x70 mm Color Verde Impresora 80mm", 20],
+  ["B0CSTC93Q7", "80x70_ Color_Rosa", "10 Rollos Papel Térmico 80x70 mm Color Rosa Impresora 80mm", 10],
+  ["B0CST84T32", "80x70_ Color_Rosa", "20 Rollos Papel Térmico 80x70 mm Color Rosa Impresora 80mm", 20],
+  ["B0CST8QK1V", "80X50", "50 Rollos Papel Térmico 80x50mm Impresora 80mm Negro para impresoras inalambricas mobiles", 50],
+  ["B0CST59GBK", "80x80", "20 Rollos Papel Térmico 80x80 mm Color Blanco Impresión Térmica Color Negro para Impresoras termicas 80mm", 20],
+  ["B09ZF94H9P", "80x80", "40 Rollos Papel Térmico 80x80mm", 40],
+  ["B08S6XVNRR", "57x30 Blanco Roll", "3 Rollos 57x30 Blancos", 3],
+  ["B0CST9G5WX", "57x30 Blanco Roll", "10 Rollos Papel Térmico 57x30 mm Impresión Térmica Color Negro para Impresoras termicas 57mm Forma Gatito Phommo Terminales Bancarias", 10],
+  ["B0CST8C41T", "57x30 Azul Roll", "10 Rollos Papel Térmico 57x30 mm Color Azul Pastel Impresión Térmica Color Negro para Impresoras termicas 57mm Forma Gatito Phommo, Terminales Bancarias", 10],
+  ["B07SFKJB89", "57x40", "50 Rollos Papel Termico Miniprinter 57x40 Impresora 58mm Xprinter", 50],
+  ["B07SGZMZNX", "57x40", "100 Rollos Papel Termico Miniprinter 57x40 (impresora 58mm)", 100],
+  ["B08SBQZJ7N", "57x40", "10 Rollos Termicos 57x40 Miniprinter", 10],
+  ["B0CST6VCVK", "57x60", "100 Rollos Papel Térmico 57x60 mm Color Blanco Impresión Térmica Negro Impresoras 57mm", 100],
+  ["B08S7DL4F1", "57x30 Blanco Label", "Pack 3 rollos etiqueta 57x30 Blanco", 3],
+  ["B08DDJLZXK", "62mm", "8 Rollos de etiquetas compatibles con Brother QL, Dk2205, incluye portarollo", 8],
+  ["B08S38DJ4V", "29mm", "10 Rollos Etiqueta DK2210 + 1 Portarollos", 10],
+  ["B0CSHKVVZV", "29mm", "20 Rollos Etiqueta Inko Brother Dk2210 29mm CON PORTAROLLO", 20],
+  ["B0CSH9ZGR1", "29mm", "40 Rollos Etiqueta Inko Dk2210 29mm CON PORTAROLLO", 40],
+  ["B08S2WC2RV", "17x54mm", "10 Rollos Etiqueta DK1204 + 1 Portarollos", 10],
+  ["B0CSH53SKV", "DK1201", "10 Rollos Dk1201 29x90mm para etiquetadoras QL800 Incluye Portarollo", 10],
+  ["B0CSH46N4M", "DK1201", "20 Rollos Etiquetas Dk1201 29x90 Mm para etiquetadoras QL800 Incluye Portarollo", 20],
+  ["B08S3686SJ", "51x25", "05 Rollos Etiqueta Termica directa", 5],
+  ["B0CSHJF4DL", "51x25", "10 Rollos Etiqueta Termica Directa 2x1 Pulgadas o 51x25", 10],
+  ["B0CSHCRYYV", "51x25", "20 Rollos Etiqueta Termica Directa 2x1 O 51x25 Mm", 20],
+  ["B0CSHK56XV", "38x25", "10 Rollos Etiquetas Térmicas Directas 1000 38x25mm Xprinter", 10],
+  ["B0CSH8TP9T", "38x25", "20 Rollos Etiquetas Térmicas Directas 1000 38x25mm Xprinter", 20],
+  ["B09ZF9Q21D", "4x6\"", "10 Rollos de etiqueta 4x6", 10],
+  ["B0CSHGMP86", "4x6\"", "05 rollos de etiqueta 4x6", 5],
+  ["B09ZFTHZQN", "4x6\"", "01 rollo de etiqueta 4x6", 1],
+  ["B0CSHT43VH", "4x8\"", "5 Rollos De Etiqueta Termica 4x8 Pulgadas", 5],
+  ["B0CSHC8QGX", "4x8\"", "10 Rollos De Etiqueta Térmica 4x8 Pulgadas", 10],
+  ["B08S3K3713", "4x8\"", "10 Rollos De Etiqueta Térmica 4x8 Pulgadas 200 C/u Envios paqueteria", 10],
+  ["B0CST6J2MC", "57x30 Rosa Roll", "10 Rollos Papel Térmico 57x30 mm Rosa Pastel", 10],
+  ["B0CST7J3SF", "57x30 Amarillo Roll", "10 Rollos Papel Térmico 57x30 mm Amarillo Pastel", 10],
+  ["B0CSHHKCH8", "40x30 Mini Plastica", "5 Rollos Etiqueta Plastica 40x30mm Cada rollo con 200 etiquetas", 5],
+  ["B0CSHDWWKS", "57x40 eti", "10 Rollos Etiqueta Térmica Directa 57x40 mm para Bascula", 10],
+  ["B0CSH99XX8", "75x51", "10 Rollos Etiquetas Térmicas 3x2 pulgadas 76x51 Xp-450b 8x5 Cm", 10],
+  ["B0CSHF79FP", "38x25 Naranja", "10 Rollos Etiqueta Térmica Naranja 38x25 Mm C/1000 Etiq C/u", 10],
+  ["B0CSHLNFJH", "38x25 Amarillo", "10 Rollos Etiqueta Térmica Amarilla 38x25 Mm C/1000 Etiq C/u…", 10],
+  ["B0CSHJHCR7", "51x25 Verde", "05 Rollos Etiqueta Térmica Verde 2x1 Pulgadas o 51x25 Mm", 5],
+  ["B0CSHGNB1M", "51x25 Amarilla", "05 Rollos Etiqueta Térmica Amarilla 51x25mm", 5],
+  ["B0CSHQSYCC", "51x25 Naranja", "05 Rollos Etiqueta Térmica Naranja 2x1 Pulgadas o 51x25", 5],
+  ["B0CSHHLZM8", "51x25 Plastica", "05 Rollos Etiqueta Térmica Plástica 51x25 2x1 Plastificada", 5],
+  ["B0CST1P3RD", "Circulo Blanco 51x51", "5 Rollos Etiqueta Térmica Blanco Circular 51x51", 5],
+  ["B0CST4C9RJ", "Circulo Rojo 51x51", "5 Rollos Etiqueta Térmica Circular Rojo 51mm", 5],
+  ["B0CSSJMWXC", "Circulo Verde 51x51", "5 Rollo Etiqueta Térmica Circulo Verde 51x51 Mm", 5],
+  ["B0CST4N54B", "Circulo Azul 51x51", "5 Rollos Etiqueta Térmica Circulo Azul 51x51 Mm", 5],
+  ["B0CST3CHCQ", "Cola Rata", "05 Rollos Etiqueta Termica Plastica Directa para Joyeria", 5],
+  ["IIOF91074", "80x50", "10 Rollos Papel Termico 80x50 mm Impresora portatil 80mm ZQ", 10],
+  ["RVIE91641", "80x50", "50 Rollos Papel Termico 80x50 mm Impresora portatil 80mm ZQ", 50],
+  ["HYPS91308", "80x70", "05 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta 80", 5],
+  ["GHCB89788", "80x70", "15 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta 80", 15],
+  ["SAGY93346", "80x70", "25 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta 80", 25],
+  ["AIDZ92154", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta3 80", 50],
+  ["WWLY90999", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta2 80", 50],
+  ["TRGL62283", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta4 80", 50],
+  ["GCTB62616", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta5 80", 50],
+  ["BUZI63317", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta6 80", 50],
+  ["UMSK70121", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta7 80", 50],
+  ["AKZZ84470", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta8 80", 50],
+  ["JIDJ92098", "80x70", "50 Rollos Papel Termico 80x70 mm Recibo Ticket POS Venta1 80", 50],
+  ["HHTP90934", "80x80", "04 Rollos Papel Termico 80x80 mm Recibo Ticket POS Venta 80", 4],
+  ["FOOD91074", "80x80", "08 Rollos Papel Termico 80x80 mm Recibo Ticket POS Venta 80", 8],
+  ["GVOH89567", "80x80", "16 Rollos Papel Termico 80x80 mm Recibo Ticket POS Venta 80", 16],
+  ["XTOF91429", "80x80", "20 Rollos Papel Termico 80x80 mm Recibo Ticket POS Venta 80", 20],
+  ["VIXK91137", "80x80", "40 Rollos Papel Termico 80x80 mm Recibo Ticket POS Venta 80", 40],
+  ["TQKL90934", "57x40", "10 Rollos Papel Termico 57x40 recibo terminal miniprinter 58", 10],
+  ["YEIC92290", "57x40", "15 Rollos Papel Termico 57x40 recibo terminal miniprinter 58", 15],
+  ["WHMV77153", "57x40", "100 Rollos Papel Termico 57x40 recibo terminal minprinter V1", 100],
+  ["VHDQ76615", "57x40", "100 Rollos Papel Termico 57x40 recibo terminal minprinter V2", 100],
+  ["UUCL75905", "57x40", "100 Rollos Papel Termico 57x40 recibo terminal minprinter V3", 100],
+  ["PMLZ76754", "57x40", "100 Rollos Papel Térmico 57x40 Impresora Portátil 58mm V4", 100],
+  ["JVXF75811", "57x40", "50 Rollos Papel Termico 57x40 recibo terminal miniprinter V2", 50],
+  ["QPHI90590", "57x40", "50 Rollos Papel Termico 57x40 recibo terminal miniprinter 58", 50],
+  ["PEDR90535", "57x60", "10 Rollos Termicos 57x60 Impresora 58mm Printer registradora", 10],
+  ["HBHE92521", "57x60", "15 Rollos Termicos 57x60 Impresora 58mm Printer registradora", 15],
+  ["SLIT90557", "57x60", "50 Rollos Termicos 57x60 Impresora 58mm Printer registradora", 50],
+  ["BSHY91331", "51x25", "03 Rollos Etiqueta Termica 51x25 codigo barras precio 1000cu", 3],
+  ["NDVE91813", "51x25", "05 Rollos Etiqueta Termica 51x25 codigo barras precio 1000cu", 5],
+  ["ANJK91088", "51x25", "10 Rollos Etiqueta Termica 51x25 codigo barras precio 1000cu", 10],
+  ["BRNG92509", "38x25", "03 Rollos Etiqueta Termica 38x25 codigo barras precio 1000cu", 3],
+  ["MIOX91832", "38x25", "05 Rollos Etiqueta Termica 38x25 codigo barras precio 1000cu", 5],
+  ["FOOD91061", "38x25", "10 Rollos Etiqueta Termica 38x25 codigo barras precio 1000cu", 10],
+  ["HTYP89648", "4x8\"", "2 Rollos Etiqueta Termica 4x8 envio guia paquetería 200 cu", 2],
+  ["VVIU92033", "4x8\"", "4 Rollos Etiqueta Termica 4x8 envio guia paquetería 200 cu", 4],
+  ["KUXP90278", "4x8\"", "6 Rollos Etiqueta Termica 4x8 envio guia paquetería 200 cu", 6],
+  ["IVPP91639", "4x8\"", "8 Rollos Etiqueta Termica 4x8 envio guia paquetería 200 cu", 8],
+];
+
+// La hoja CARGA SEMANAL al 24 de julio de 2026: el punto de partida del
+// inventario. Se siembra como movimientos de ajuste con referencia visible,
+// no como una existencia escrita a mano, para que el libro mayor cuadre desde
+// el primer renglón. En cuanto se levante el primer conteo en la plataforma,
+// estos quedan como lo que son: de dónde venía el número.
+const FECHA_CARGA = '2026-07-24';
+const CARGA_INICIAL = [
+  ["Etiqueta Circular 51mm (Lila)", -50, 520],
+  ["Despachadores", 5, 0],
+  ["Rollo Térmico 80x70 ESTRELLA ROJA", 0, 2600],
+  ["Poliolefina", 4, 0],
+  ["PLAYO NEGRO", 8, 0],
+  ["Etiqueta Térmica 51x25 (Plástica)", -44, 3460],
+  ["Caja RM68", 650, 0],
+  ["Caja Proveedor 57x40", 300, 0],
+  ["Rollo Térmico 80x70 (Blanco)", -17204, 36250],
+  ["Etiqueta Térmica Directa 4x1 pulgadas (Amarillo)", 103, 0],
+  ["PORTAROLLO DK2205", 251, 0],
+  ["Rollo Térmico 80x70 (Rosa)", -7, 0],
+  ["Etiqueta Térmica Directa 4x3 pulgadas (Amarillo)", 2, 0],
+  ["Etiqueta Térmica Directa 4x4 pulgadas (Amarillo)", 1, 0],
+  ["Etiqueta Térmica 4x6 (Rojo)", 300, 0],
+  ["Rollo Térmico 80x80", 58, 0],
+  ["Etiqueta Térmica 4x6 (Amarillo)", 501, 0],
+  ["Etiqueta Térmica 4x6 (Rosa)", 429, 0],
+  ["Etiqueta Térmica 4x6 (Verde)", 300, 0],
+  ["Rollo Térmico 80x70 (Azul)", 115, 0],
+  ["Etiqueta Térmica 4x6 (Naranja)", 279, 0],
+  ["Etiqueta DK1201 compatible con Brother", 149, 8970],
+  ["Rollo Térmico 80x70 (Verde)", 139, 0],
+  ["PORTAROLLO DK2210", 225, 0],
+  ["Rollo Térmico 57x40 (Blanco)", 67322, 950],
+  ["Etiqueta Plástica Termica Directa Cola Rata", 4, 0],
+  ["Etiqueta Termica Directa 4x2 Pulgadas Blanco", 196, 0],
+  ["Etiqueta Brother 29mm DK2210", 758, 20660],
+  ["Etiqueta Térmica 57x30 (Blanco)", 3533, 0],
+  ["Etiqueta Brother 17x54 DK1204", 524, 9010],
+  ["Etiqueta Térmica 57x30 (Azul)", 1206, 0],
+  ["Etiqueta Térmica Directa 4x3 pulgadas Blanco", 130, 2380],
+  ["Etiqueta Brother 62mm DK2205 (PLÁSTICA)", 1426, 0],
+  ["Etiqueta Brother 62mm DK2205 (Blanco)", 10987, 16400],
+  ["Etiqueta Brother 62mm DK2205 (Amarillo)", 773, 0],
+  ["Etiqueta Térmica 38x25 (Blanco)", 1688, 21590],
+  ["Rollo Térmico 57x40 (Azul)", 4583, 0],
+  ["Rollo Térmico 57x40 (Rosa)", 3250, 0],
+  ["Etiqueta Térmica 76x51", 846, 7990],
+  ["Rollo Térmico 57x40 (Amarillo)", 2949, 0],
+  ["Etiqueta Térmica 4x8", 2558, 19254],
+  ["Rollo Térmico 57x40 (Verde)", 3639, 0],
+  ["Etiqueta Térmica 57x40", 1964, 33060],
+  ["Rollo Térmico 57x40 (Lila)", 4520, 0],
+  ["Etiqueta Termica Directa 40x30mm (Mini Vinil)", 1552, 4900],
+  ["Rollo Térmico 57x40 (Naranja)", 3393, 0],
+  ["Etiqueta Térmica Directa 4x4 pulgadas Blanco", 135, 3980],
+  ["Etiqueta Térmica 51x25 (Blanco)", 7625, 11870],
+  ["PORTAROLLO DK1201", 175, 0],
+  ["Rollo Térmico 80x70 (Naranja)", 4653, 0],
+  ["Etiqueta Circular 51mm (Rosa)", 209, 1580],
+  ["Etiqueta Térmica Directa 3x1 pulgadas", 357, 1450],
+  ["Rollo Térmico 80x70 (Lila)", 2489, 0],
+  ["Etiqueta Brother 62mm DK2205 (Verde)", 137, 0],
+  ["Etiqueta Circular 51mm Blanco", 651, 1060],
+  ["ENVÍO", 1000, 0],
+  ["Etiqueta Térmica 40x30 (800 etiquetas p/r)", 916, 10290],
+  ["Rollo Autocopiante 76x70", 49, 0],
+  ["Rollo Térmico 57x60", 67554, 91550],
+  ["Rollo Bond 76x70", 40, 0],
+  ["PORTAROLLO DK1204", 146, 0],
+  ["Etiqueta \"FRAGIL\"", 1, 0],
+  ["Etiqueta Térmica 38x25 (Rojo)", 1031, 0],
+  ["Etiqueta Circular 51mm (Verde)", 307, 490],
+  ["Etiqueta Térmica Directa 22x16 mm", 1918, 0],
+  ["Etiqueta Circular 51mm (Naranja)", 487, 310],
+  ["Etiqueta Térmica 38x25 (Amarillo)", 426, 0],
+  ["Rollo Térmico 80x50", 19908, 7350],
+  ["Portarollo DK2251", 100, 0],
+  ["Rollo Térmico 57x30 (Blanco)", 5128, 0],
+  ["Etiqueta Térmica 38x25 (Verde)", 422, 0],
+  ["Etiqueta Térmica 38x25 (Naranja)", 426, 0],
+  ["Caja RM202", 90, 0],
+  ["Caja RM28", 400, 0],
+  ["Etiqueta Termica Directa 4x2 Pulgadas (Amarillo)", 223, 500],
+  ["Caja RM85", 200, 0],
+  ["Etiqueta Circular 51mm (Rojo)", 302, 1570],
+  ["Caja RM51", 125, 0],
+  ["Caja RM88", 45, 0],
+  ["Etiqueta Térmica 51x25 (Amarillo)", 204, 1980],
+  ["Rollo Térmico 57x30 (Rosa)", 2002, 0],
+  ["Etiqueta Térmica 51x25 (Verde)", 284, 0],
+  ["Cinta Transparente", 17, 0],
+  ["Playo Grande", 16, 0],
+  ["Etiqueta Circular 51mm (Azul)", 528, 510],
+  ["Playo Chico", 22, 0],
+  ["Etiqueta Térmica 51x25 (Naranja)", 930, 2520],
+  ["Sobres Amarillos", 400, 0],
+  ["Etiqueta Térmica 4x6 Blanco", 2514, 12070],
+  ["Caja RM27", 150, 0],
+  ["Etiqueta Térmica Directa 4x1 pulgadas Blanco", 278, 1920],
+  ["CAJA RM30", 450, 0],
+  ["102x70 ROLLO", 1028, 0],
+  ["110x120 ROLLO", 10, 0],
+  ["Etiqueta Brother 62mm DK2205 (Rojo)", 85, 0],
+  ["Rollo Térmico 57x45", 55919, 29100],
+  ["Etiqueta Brother 62mm DK2205 (Azul)", 15, 0],
+  ["Etiqueta Brother 62mm (DK2251) Ngo/Rojo", 384, 0],
+  ["Etiqueta Circular 51mm (Azul Reflex)", 252, 510],
+  ["Caja Master", 200, 0],
+  ["Caja RM90", 150, 0],
+  ["ETIQUETA IMPRESA AZUL INKO 61x252mm", 16, 0],
+  ["ETIQUETA IMPRESA AZUL INKO 4X6", 12, 0],
+  ["80x80 PEDIDO ESPECIAL", 281, 0],
+  ["80x70 \"GRACIAS\" Verde", 5, 0],
+  ["Etiqueta Circular 51mm (Amarillo)", 109, 410],
+  ["80x70 \"GRACIAS\" Rojo", 5, 0],
+  ["Rollo Térmico 57x30 (Azul)", 2764, 0],
+  ["80x70 \"GRACIAS\" Azul", 5, 0],
+  ["Rollo Térmico 57x30 (Amarillo)", 2587, 0],
+  ["80x70 \"GRACIAS\" Morado", 5, 0],
+  ["80x70 ESPECIAL CANTARITOS Amarillo", 65, 0],
+  ["80x70 ESPECIAL CANTARITOS Azul", 55, 0],
+  ["80x70 ESPECIAL CANTARITOS Rosa", 65, 0],
+  ["Rollo Térmico 57x60 Amarillo", 200, 0],
+  ["Etiqueta Térmica 51x25 (Poliéster Plata)", 102, 0],
+  ["Caja Proveedor 57x60", 100, 0],
+  ["Cutters", 12, 0],
+  ["Cintas Impresas INKO", 27, 288],
+];
+
+// Idempotente: solo inserta lo que falta, así que quien ya dio de alta un
+// producto o corrigió un mínimo desde la plataforma no lo ve pisado ni
+// duplicado al volver a sembrar.
+function sembrarAlmacen() {
+  const resumen = { bodegas: 0, productos: 0, publicaciones: 0, carga: 0 };
+
+  const existeBodega = db.prepare('SELECT id FROM almacen_bodegas WHERE clave = ?');
+  const insertBodega = db.prepare(
+    'INSERT INTO almacen_bodegas (clave, nombre, orden) VALUES (?, ?, ?)'
+  );
+  BODEGAS.forEach(([clave, nombre], i) => {
+    if (!existeBodega.get(clave)) { insertBodega.run(clave, nombre, i); resumen.bodegas++; }
+  });
+
+  // Las plataformas ocupan el lugar del proveedor en la recepción de Calidad, así
+  // que tienen que existir en su catálogo o la pantalla de Calidad mostraría un
+  // proveedor que no reconoce. El orden alto las deja al final de la lista.
+  const insertCatalogo = db.prepare(
+    'INSERT OR IGNORE INTO catalogo_calidad (tipo, valor, orden) VALUES (?, ?, ?)'
+  );
+  PLATAFORMAS.forEach((v, i) => insertCatalogo.run('proveedor', v, 90 + i));
+
+  const material = db.prepare('SELECT id FROM materiales WHERE modelo = ?');
+  const existeProducto = db.prepare('SELECT id FROM almacen_productos WHERE sku = ?');
+  const insertProducto = db.prepare(`
+    INSERT INTO almacen_productos (sku, modelo, tipo_material, nombre, stock_minimo, material_id, orden)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  PRODUCTOS.forEach(([sku, modelo, tipo, nombre, minimo, modeloCalidad], i) => {
+    if (existeProducto.get(sku)) return;
+    const m = modeloCalidad ? material.get(modeloCalidad) : null;
+    insertProducto.run(sku, modelo, tipo, nombre, minimo, m ? m.id : null, i);
+    resumen.productos++;
+  });
+
+  const existePublicacion = db.prepare('SELECT id FROM almacen_publicaciones WHERE codigo = ?');
+  const insertPublicacion = db.prepare(
+    'INSERT INTO almacen_publicaciones (codigo, modelo, nombre, unidades) VALUES (?, ?, ?, ?)'
+  );
+  PUBLICACIONES.forEach(([codigo, modelo, nombre, unidades]) => {
+    if (!existePublicacion.get(codigo)) {
+      insertPublicacion.run(codigo, modelo, nombre, unidades);
+      resumen.publicaciones++;
+    }
+  });
+
+  // La carga inicial se siembra una sola vez y solo si el libro mayor está
+  // vacío. En cuanto haya un movimiento capturado en la plataforma, volver a
+  // sembrarla duplicaría existencias, que es justo el error que el Excel
+  // cometía cada semana al pegar encima el reporte de Pulpos.
+  //
+  // Y solo en una instalación NUEVA: cuando el catálogo se acaba de crear en esta
+  // misma corrida. Si no, en cuanto alguien borrara la carga desde Limpieza —para
+  // volver a cargarla con datos de hoy— la plataforma la resembraría sola con la
+  // existencia vieja de julio en el siguiente arranque.
+  const hayMovimientos = db.prepare('SELECT COUNT(*) AS n FROM almacen_movimientos').get().n;
+  const instalacionNueva = resumen.productos > 0
+    && resumen.productos === db.prepare('SELECT COUNT(*) AS n FROM almacen_productos').get().n;
+  if (!hayMovimientos && instalacionNueva) {
+    const producto = db.prepare('SELECT id FROM almacen_productos WHERE nombre = ?');
+    const bodega = db.prepare('SELECT id FROM almacen_bodegas WHERE clave = ?');
+    const insertMov = db.prepare(`
+      INSERT INTO almacen_movimientos
+        (fecha, semana, tipo, producto_id, bodega_origen_id, bodega_destino_id,
+         cantidad, referencia, origen_tipo, notas, creado_en)
+      VALUES (?, ?, 'ajuste', ?, ?, ?, ?, ?, 'carga_inicial', ?, ?)
+    `);
+    const semana = semanaISO(new Date(`${FECHA_CARGA}T12:00:00`));
+    const ahora = new Date().toISOString();
+    const b1 = bodega.get('B1');
+    const b2 = bodega.get('B2');
+    const nota = `Existencia del reporte de Pulpos al ${FECHA_CARGA}, cargada del libro GESTION_ALMACEN_INKO.xlsm.`;
+
+    const sinCatalogo = [];
+    db.exec('BEGIN');
+    try {
+      for (const [nombre, enB1, enB2] of CARGA_INICIAL) {
+        const p = producto.get(nombre);
+        if (!p) { sinCatalogo.push(nombre); continue; }
+        // Una existencia negativa en el reporte de origen se carga tal cual: es
+        // un dato del que hay que enterarse, no uno que convenga redondear a cero.
+        for (const [cantidad, destino] of [[enB1, b1], [enB2, b2]]) {
+          if (!cantidad) continue;
+          const sube = cantidad > 0;
+          insertMov.run(FECHA_CARGA, semana, p.id,
+            sube ? null : destino.id, sube ? destino.id : null,
+            Math.abs(cantidad), 'CARGA INICIAL', nota, ahora);
+          resumen.carga++;
+        }
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    if (sinCatalogo.length) {
+      console.log(`  Almacén: ${sinCatalogo.length} renglón(es) de la carga inicial no están en el catálogo y se omitieron: ${sinCatalogo.join(', ')}`);
+    }
+  }
+
+  return resumen;
+}
+
+module.exports = { sembrarAlmacen, PLATAFORMAS };
+
+if (require.main === module) {
+  const r = sembrarAlmacen();
+  console.log(`Almacén sembrado. Bodegas: ${r.bodegas} · Productos: ${r.productos} · Publicaciones: ${r.publicaciones} · Movimientos de carga inicial: ${r.carga}`);
+}

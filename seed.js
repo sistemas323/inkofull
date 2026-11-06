@@ -8,12 +8,36 @@
 // atributos del activo y el campo solo_activos de cada ítem.
 
 const { db } = require('./db');
+const { sembrarAlmacen } = require('./seed-almacen');
+const TRANSITO = require('./transito-estructura');
 
 const OK = 'ok_problema';   // Satisfactorio / Con problema
 const REV = 'revisado';     // Revisado sí / no
 const NUM = 'conteo';       // Cantidad numérica
 const DOC = 'documento';    // Exige adjuntar uno o más archivos
 const FECHA = 'fecha';      // Se captura una fecha; con meta.vigencia calcula días restantes
+const TEXTO = 'texto';      // Se escribe a mano
+const MED = 'medidor';      // Una lectura con su foto: kilometraje, horómetro
+
+// Los papeles y el kilometraje que lleva cualquier carro. Se repiten tal cual en
+// los tres checklists de carro, así que viven aquí una sola vez.
+const PAPELES_CARRO = [
+  ['Tarjeta de circulación', FECHA, null,
+    { vigencia: true, obligatoria: true, etiqueta: 'Vence la tarjeta de circulación',
+      ayuda: 'Captura la fecha en que vence. La plataforma calcula los días que le quedan.' }],
+  ['Póliza de seguro', FECHA, null,
+    { vigencia: true, obligatoria: true, etiqueta: 'Vence la póliza',
+      ayuda: 'Captura la fecha en que vence. La plataforma calcula los días que le quedan.' }],
+  ['Verificación vehicular', FECHA, null,
+    { vigencia: true, obligatoria: true, etiqueta: 'Vence la verificación',
+      ayuda: 'Captura la fecha en que vence. La plataforma calcula los días que le quedan.' }],
+  ['¿Unidad afiliada a ACME?', FECHA, null,
+    { vigencia: true, etiqueta: 'Vigencia de ACME',
+      ayuda: 'Captura la fecha en que vence la afiliación. Si no está afiliada, déjalo vacío.' }],
+  ['Kilometraje al momento de la revisión', MED, null,
+    { unidad: 'km', obligatoria: true,
+      ayuda: 'Anota los kilómetros del tablero y toma la foto del odómetro.' }],
+];
 
 const PLANTILLAS = [
   {
@@ -178,7 +202,7 @@ const PLANTILLAS = [
   {
     clave: 'transito',
     nombre: 'Checklist Tránsito',
-    descripcion: 'Entregas directas en CEDIS · un checklist por envío',
+    descripcion: TRANSITO.DESCRIPCION,
     tipo_captura: 'items',
     frecuencia: 'diario',
     aplica_a: null,
@@ -192,15 +216,11 @@ const PLANTILLAS = [
     requiere_supervision: 1,
     // Datos que se capturan ANTES de la inspección. El número de envío es
     // además la referencia que distingue un checklist de otro el mismo día.
-    campos: [
-      { clave: 'numero_envio', etiqueta: 'Número de envío', requerido: 1, referencia: 1,
-        ayuda: 'Identifica este checklist. Puede haber varios envíos el mismo día.' },
-      { clave: 'lugar_entrega', etiqueta: 'Lugar de entrega', requerido: 1,
-        ayuda: 'CEDIS o destino de la entrega.' },
-    ],
+    campos: TRANSITO.CAMPOS,
     secciones: [
       {
         titulo: 'Chequeo citas',
+        condicion: TRANSITO.ENVIO,
         items: [
           ['Revisar funcionamiento teléfonos tránsito', REV],
           ['Realizar carga teléfonos tránsito', REV],
@@ -238,6 +258,7 @@ const PLANTILLAS = [
       {
         titulo: 'Antes de salir · Documentos',
         etapa: 'salida',
+        condicion: TRANSITO.ENVIO,
         items: [
           ['Hojas de autorización de ingreso', DOC, null,
             { momento: 'antes', ayuda: 'Una por cada punto de entrega. Sin ellas no se autoriza la salida.' }],
@@ -246,11 +267,13 @@ const PLANTILLAS = [
       {
         titulo: 'Al regresar · Documentos',
         etapa: 'regreso',
+        condicion: TRANSITO.ENVIO,
         items: [
           ['Hojas de recepción de entrega', DOC, null,
             { momento: 'despues', ayuda: 'Una por cada entrega concluida, firmada por quien recibió.' }],
         ],
       },
+      ...TRANSITO.SECCIONES_COLECTA,
     ],
   },
 
@@ -355,6 +378,180 @@ const PLANTILLAS = [
           ['Revisar desglose de entradas de material', REV],
           ['Revisar desglose de salidas de material', REV],
           ['Revisar desglose de devoluciones de material', REV],
+        ],
+      },
+    ],
+  },
+
+  // --- las unidades que se sumaron el 1-oct-2026: carros utilitarios, carros de
+  // arrendamiento, motos y patines. Son checklists propios y no uno solo con
+  // todo adentro: a un patín no se le revisa el aceite, y a una moto no se le
+  // pregunta por la caja de herramientas de una camioneta.
+  {
+    clave: 'utilitario',
+    nombre: 'Inspección de Carro Utilitario',
+    descripcion: 'Revisión del carro de uso interno y de vueltas cortas',
+    tipo_captura: 'items',
+    frecuencia: 'viernes',
+    aplica_a: 'utilitario',
+    firma_operador: 1,
+    firma_coordinador: 0,
+    foto_obligatoria: 1,
+    secciones: [
+      {
+        titulo: '1. Antes de arrancar',
+        items: [
+          ['Llantas: presión correcta y sin desgaste irregular', OK],
+          ['Llanta de refacción, gato y llave de cruz a bordo', OK],
+          ['Luces, direccionales y luces de freno', OK],
+          ['Claxon y limpiaparabrisas', OK],
+          ['Espejos y cristales sin grietas', OK],
+          ['Frenos responden sin ruido ni esponjosidad', OK],
+        ],
+      },
+      {
+        titulo: '2. Motor y fluidos',
+        items: [
+          ['Nivel de aceite del motor', OK],
+          ['Anticongelante y agua del limpiaparabrisas', OK],
+          ['Líquido de frenos', OK],
+          ['Sin fugas debajo de la unidad', OK],
+          ['Batería y cables en buen estado', OK],
+        ],
+      },
+      {
+        titulo: '3. Interior y seguridad',
+        items: [
+          ['Cinturones de seguridad funcionan', OK],
+          ['Extintor vigente y a la mano', OK],
+          ['Botiquín de primeros auxilios', OK],
+          ['Triángulos o conos reflejantes', OK],
+          ['Interior limpio y sin objetos sueltos', OK],
+        ],
+      },
+      { titulo: '4. Documentación y kilometraje', items: PAPELES_CARRO },
+    ],
+  },
+
+  {
+    clave: 'arrendamiento',
+    nombre: 'Inspección de Carro de Arrendamiento',
+    descripcion: 'Revisión de unidades arrendadas: su estado y su contrato',
+    tipo_captura: 'items',
+    frecuencia: 'viernes',
+    aplica_a: 'arrendamiento',
+    firma_operador: 1,
+    firma_coordinador: 1,
+    foto_obligatoria: 1,
+    secciones: [
+      {
+        titulo: '1. Antes de arrancar',
+        items: [
+          ['Llantas: presión correcta y sin desgaste irregular', OK],
+          ['Llanta de refacción, gato y llave de cruz a bordo', OK],
+          ['Luces, direccionales y luces de freno', OK],
+          ['Claxon y limpiaparabrisas', OK],
+          ['Espejos y cristales sin grietas', OK],
+          ['Frenos responden sin ruido ni esponjosidad', OK],
+          ['Nivel de aceite y sin fugas debajo de la unidad', OK],
+        ],
+      },
+      {
+        titulo: '2. Estado de la unidad arrendada',
+        items: [
+          ['Carrocería sin golpes nuevos (los de antes ya están anotados en el contrato)', OK],
+          ['Interior sin daños ni faltantes', OK],
+          ['Limpieza general: así se tiene que entregar', OK],
+          ['Herramienta y accesorios que entregó el arrendador', OK],
+        ],
+      },
+      {
+        titulo: '3. Contrato',
+        items: [
+          ['Número de contrato', TEXTO, null, { ayuda: 'Como lo trae el contrato del arrendador.' }],
+          ['Vigencia del contrato', FECHA, null,
+            { vigencia: true, obligatoria: true, etiqueta: 'Vence el contrato',
+              ayuda: 'Captura la fecha en que termina el arrendamiento.' }],
+          ['¿El kilometraje va dentro de lo que permite el contrato?', OK],
+        ],
+      },
+      { titulo: '4. Documentación y kilometraje', items: PAPELES_CARRO },
+    ],
+  },
+
+  {
+    clave: 'moto',
+    nombre: 'Inspección de Moto',
+    descripcion: 'Revisión de motos de entrega y de mensajería',
+    tipo_captura: 'items',
+    frecuencia: 'viernes',
+    aplica_a: 'moto',
+    firma_operador: 1,
+    firma_coordinador: 0,
+    foto_obligatoria: 1,
+    secciones: [
+      {
+        titulo: '1. Antes de arrancar',
+        items: [
+          ['Llantas: presión y dibujo suficiente', OK],
+          ['Freno delantero y freno trasero', OK],
+          ['Cadena o banda: tensión y lubricación', OK],
+          ['Luces, direccionales y luz de freno', OK],
+          ['Claxon y espejos', OK],
+          ['Nivel de aceite', OK],
+          ['Sin fugas de gasolina ni de aceite', OK],
+          ['Suspensión y manubrio sin juego', OK],
+        ],
+      },
+      {
+        titulo: '2. Equipo del operador',
+        items: [
+          ['Casco en buen estado y bien ajustado', OK],
+          ['Chaleco reflejante', OK],
+          ['Guantes y rodilleras (si se usan)', OK],
+          ['Caja o maletero cierra bien y sin daños', OK],
+          ['Red o cuerdas para sujetar la carga', OK],
+        ],
+      },
+      { titulo: '3. Documentación y kilometraje', items: PAPELES_CARRO },
+    ],
+  },
+
+  {
+    clave: 'patin',
+    nombre: 'Inspección de Patín Hidráulico',
+    descripcion: 'Revisión de los patines de bodega',
+    tipo_captura: 'items',
+    frecuencia: 'semanal',
+    aplica_a: 'patin',
+    firma_operador: 1,
+    firma_coordinador: 0,
+    foto_obligatoria: 1,
+    secciones: [
+      {
+        titulo: '1. Estructura y ruedas',
+        items: [
+          ['Horquillas sin dobleces, grietas ni soldaduras abiertas', OK],
+          ['Ruedas y rodillos giran libres y sin desgaste excesivo', OK],
+          ['Chasis y timón sin golpes que estorben', OK],
+          ['Calcomanía de capacidad legible', OK],
+        ],
+      },
+      {
+        titulo: '2. Sistema hidráulico',
+        items: [
+          ['Sube la carga sin brincos y la sostiene', OK],
+          ['Baja de manera controlada, sin caída libre', OK],
+          ['Sin fuga de aceite en el pistón ni goteo en el piso', OK],
+          ['Palanca de subir / neutral / bajar funciona en las tres posiciones', OK],
+        ],
+      },
+      {
+        titulo: '3. Seguridad y limpieza',
+        items: [
+          ['Freno de estacionamiento detiene el patín (si lo tiene)', OK],
+          ['Sin tornillos, chavetas ni seguros faltantes', OK],
+          ['Limpio y sin material encima al guardarlo', OK],
         ],
       },
     ],
@@ -489,113 +686,22 @@ function sembrar() {
   });
 
   sembrarCalidad();
+  // Después de Calidad, siempre: los productos de Almacén se enganchan a los
+  // materiales por su modelo, y si los materiales no existen todavía todos
+  // quedarían sin muestreo.
+  sembrarAlmacen();
 
-  completarSecciones();
-  sincronizarEstructura();
   return nuevas;
 }
 
-// Alinea con esta definición los atributos ESTRUCTURALES de las plantillas que
-// ya existían: los campos de cabecera, si se llena por etapas y a qué etapa
-// pertenece cada sección. Son cosas que no se editan desde Configuración, así
-// que sincronizarlas no pisa ninguna decisión del administrador —a diferencia
-// de 'activo' o 'foto_obligatoria', que sí se tocan ahí y aquí no se rozan.
-function sincronizarEstructura() {
-  const buscarPlantilla = db.prepare(
-    'SELECT id, campos, por_etapas, descripcion, frecuencia, requiere_supervision FROM plantillas WHERE clave = ?');
-  const actualizarPlantilla = db.prepare(
-    'UPDATE plantillas SET campos = ?, por_etapas = ?, descripcion = ?, frecuencia = ?, requiere_supervision = ? WHERE id = ?');
-  const buscarSeccion = db.prepare('SELECT id, etapa, condicion, activo FROM secciones WHERE plantilla_id = ? AND titulo = ?');
-  const actualizarSeccion = db.prepare('UPDATE secciones SET etapa = ?, condicion = ?, activo = ? WHERE id = ?');
-  const buscarItem = db.prepare('SELECT id, texto, meta, tipo_respuesta FROM items WHERE seccion_id = ? AND orden = ?');
-  const actualizarItem = db.prepare('UPDATE items SET texto = ?, meta = ?, tipo_respuesta = ? WHERE id = ?');
-  const insertarItem = db.prepare(`
-    INSERT INTO items (seccion_id, orden, texto, tipo_respuesta, solo_activos, meta)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  for (const p of PLANTILLAS) {
-    const fila = buscarPlantilla.get(p.clave);
-    if (!fila) continue;
-
-    const campos = JSON.stringify(p.campos || []);
-    const porEtapas = p.por_etapas || 0;
-    const supervision = p.requiere_supervision || 0;
-    if (fila.campos !== campos || fila.por_etapas !== porEtapas || fila.descripcion !== p.descripcion
-        || fila.frecuencia !== p.frecuencia || fila.requiere_supervision !== supervision) {
-      actualizarPlantilla.run(campos, porEtapas, p.descripcion, p.frecuencia, supervision, fila.id);
-      console.log(`  Estructura actualizada en «${p.nombre}» (frecuencia: ${p.frecuencia}`
-        + `${supervision ? ', salida supervisada' : ''}).`);
-    }
-
-    for (const s of p.secciones) {
-      const etapa = s.etapa || 'salida';
-      const condicion = s.condicion ? JSON.stringify(s.condicion) : null;
-      const seccion = buscarSeccion.get(fila.id, s.titulo);
-      if (!seccion) continue;
-
-      const activa = s.activo === 0 ? 0 : 1;
-      if (seccion.etapa !== etapa || seccion.condicion !== condicion || seccion.activo !== activa) {
-        actualizarSeccion.run(etapa, condicion, activa, seccion.id);
-        console.log(`  «${s.titulo}» ${activa ? 'actualizada' : 'RETIRADA de circulación'} (etapa ${etapa}).`);
-      }
-
-      // Los ítems también viven aquí: nada más los edita, así que esta definición
-      // es la fuente de verdad. Se actualizan los que cambiaron y se agregan los
-      // que no existían, sin tocar lo ya capturado — los id se conservan.
-      s.items.forEach(([texto, tipo, soloActivos, meta], i) => {
-        const item = buscarItem.get(seccion.id, i);
-        const metaJSON = JSON.stringify(meta || {});
-
-        if (!item) {
-          insertarItem.run(seccion.id, i, texto, tipo,
-            soloActivos ? JSON.stringify(soloActivos) : null, metaJSON);
-          console.log(`  Ítem nuevo en «${s.titulo}»: ${texto}`);
-          return;
-        }
-        if (item.texto !== texto || item.meta !== metaJSON || item.tipo_respuesta !== tipo) {
-          actualizarItem.run(texto, metaJSON, tipo, item.id);
-          console.log(`  Ítem actualizado: «${texto}»`);
-        }
-      });
-    }
-  }
-}
-
-// La carga inicial salta las plantillas que ya existen, así que un checklist en
-// uso nunca recibiría secciones nuevas. Esto las agrega sin tocar lo capturado:
-// compara por título e inserta solo lo que falta.
-function completarSecciones() {
-  const buscarPlantilla = db.prepare('SELECT id FROM plantillas WHERE clave = ?');
-  const buscarSeccion = db.prepare('SELECT id FROM secciones WHERE plantilla_id = ? AND titulo = ?');
-  const ultimoOrden = db.prepare('SELECT COALESCE(MAX(orden), -1) AS n FROM secciones WHERE plantilla_id = ?');
-  const insertSeccion = db.prepare('INSERT INTO secciones (plantilla_id, orden, titulo, etapa, condicion, activo) VALUES (?, ?, ?, ?, ?, ?)');
-  const insertItem = db.prepare(`
-    INSERT INTO items (seccion_id, orden, texto, tipo_respuesta, solo_activos, meta)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  let agregadas = 0;
-  for (const p of PLANTILLAS) {
-    const plantilla = buscarPlantilla.get(p.clave);
-    if (!plantilla) continue;
-
-    for (const s of p.secciones) {
-      if (buscarSeccion.get(plantilla.id, s.titulo)) continue;
-
-      const orden = ultimoOrden.get(plantilla.id).n + 1;
-      const seccionId = Number(insertSeccion.run(plantilla.id, orden, s.titulo, s.etapa || 'salida',
-        s.condicion ? JSON.stringify(s.condicion) : null, s.activo === 0 ? 0 : 1).lastInsertRowid);
-      s.items.forEach(([texto, tipo, soloActivos, meta], i) => {
-        insertItem.run(seccionId, i, texto, tipo,
-          soloActivos ? JSON.stringify(soloActivos) : null, JSON.stringify(meta || {}));
-      });
-      console.log(`  Sección nueva en «${p.nombre}»: ${s.titulo}`);
-      agregadas++;
-    }
-  }
-  return agregadas;
-}
+// Esta carga solo CREA los checklists que faltan. Antes, además, en cada arranque
+// realineaba con esta lista los checklists que ya existían —campos, secciones e
+// ítems, emparejando los ítems por su posición—. Desde que el Administrador edita
+// las preguntas en Configuración eso ya no se puede: reordenar en el editor hacía
+// que un arranque reescribiera el texto de la pregunta equivocada, y un área
+// renombrada volvía a crearse con su nombre viejo. Ahora la base manda sobre los
+// checklists existentes, y un cambio de estructura hecho por el sistema va como
+// migración de una sola vez en db.js (ver 'transito-envio-colecta').
 
 module.exports = { sembrar };
 

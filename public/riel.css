@@ -1,0 +1,653 @@
+/* ==========================================================================
+   Estilo «Riel azul» — escogido por Ronaldo el 18-sep-2026.
+
+   Va encima de estilos.css: aquí solo se cambia la forma, nunca los colores de
+   marca (esos viven en marca.css). Tres ideas:
+     · un riel azul oscuro a la izquierda con los módulos siempre a la vista;
+     · una cabecera Azul INKO en cada pantalla, con el motivo del círculo;
+     · tarjetas blancas limpias —sin marcos grises—, con el borde izquierdo
+       azul como firma, y el verde/ámbar/rojo solo para decir cómo va algo.
+   ========================================================================== */
+
+:root {
+  --ancho-riel: 88px;
+  --radio: 14px;
+  --radio-grande: 16px;
+  --sombra: 0 2px 10px rgba(0, 29, 58, .06);
+  --sombra-alta: 0 10px 30px rgba(0, 29, 58, .13);
+}
+
+body { background: var(--gris); }
+
+/* ------------------------------------------------------------------ riel */
+.riel {
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
+  width: var(--ancho-riel);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 16px 0 12px;
+  background: var(--azul-oscuro);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.riel::-webkit-scrollbar { display: none; }
+.riel .logo-riel { width: 58px; height: auto; margin: 0 0 14px; padding: 4px; }
+.riel button {
+  position: relative; flex: none;
+  width: 68px; padding: 9px 0 8px; border: 0; border-radius: 12px;
+  display: grid; justify-items: center; gap: 4px;
+  background: transparent; color: rgba(255, 255, 255, .72);
+  font-size: 10.5px; font-weight: 600; line-height: 1.15; text-align: center;
+  transition: background .12s, color .12s;
+}
+.riel button svg {
+  width: 23px; height: 23px; fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+.riel button:hover { background: rgba(255, 255, 255, .08); color: var(--blanco); }
+.riel button.si { background: var(--azul-inko); color: var(--blanco); box-shadow: inset 3px 0 0 var(--blanco); }
+.riel .cuenta-riel {
+  position: absolute; top: 3px; right: 9px;
+  min-width: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--blanco); color: var(--alerta);
+  font-style: normal; font-size: 10.5px; font-weight: 800; line-height: 17px;
+}
+.riel .separador-riel { width: 40px; height: 1px; background: rgba(255, 255, 255, .14); margin: 6px 0; flex: none; }
+.riel .relleno-riel { flex: 1; min-height: 8px; }
+
+body.con-riel .area { margin-left: var(--ancho-riel); }
+/* Con riel, el logo ya está en él: la cabecera no lo repite. */
+body.con-riel .barra .marca { display: none; }
+
+/* ------------------------------------------------------- cabecera azul */
+.barra {
+  position: relative; z-index: 1; overflow: hidden;
+  align-items: flex-end;
+  padding: 26px 32px 30px;
+  background: var(--azul-inko);
+}
+/* El círculo: la contraforma del logotipo, en grande y casi transparente. */
+.barra::after {
+  content: ''; position: absolute; pointer-events: none;
+  right: -70px; top: -110px; width: 380px; height: 380px; border-radius: 50%;
+  border: 46px solid rgba(255, 255, 255, .05);
+}
+.barra > * { position: relative; z-index: 1; }
+.barra .titulo h1 { font-size: 27px; line-height: 1.15; }
+.barra .marca img { height: 34px; width: auto; padding: 0; }
+.barra .marca { flex: none; align-self: center; }
+.barra .titulo .sub { font-size: 14.5px; margin-top: 4px; color: rgba(255, 255, 255, .8); }
+.barra .titulo .sobretitulo {
+  display: block; font-size: 12px; font-weight: 700; letter-spacing: .14em;
+  text-transform: uppercase; color: rgba(255, 255, 255, .66); margin-bottom: 6px;
+}
+.barra .titulo .sobretitulo:empty { display: none; }
+.barra.grande { padding: 34px 32px 76px; }
+.barra.grande .titulo h1 { font-size: 34px; }
+.barra nav { align-self: center; }
+
+.cinta-prueba { top: 0; }
+
+.envoltorio { padding: 24px 32px 130px; max-width: 1180px; margin: 0; }
+
+/* ------------------------------------------------------------- portada */
+.cifras-inicio {
+  position: relative; z-index: 2;
+  margin: -74px 0 28px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  background: var(--blanco); border-radius: 18px; box-shadow: var(--sombra-alta);
+  overflow: hidden;
+}
+.cifra-inicio {
+  display: grid; gap: 2px; align-content: start; text-align: left;
+  padding: 18px 22px; border: 0; border-right: 1px solid var(--azul-borde);
+  background: var(--blanco);
+}
+.cifra-inicio:last-child { border-right: 0; }
+.cifra-inicio:hover { background: #F8FAFD; }
+.cifra-inicio small { font-size: 13px; font-weight: 600; color: var(--tinta-suave); }
+.cifra-inicio b { font-family: var(--fuente-titulo); font-size: 32px; line-height: 1.1; color: var(--azul-inko); }
+.cifra-inicio.alerta b { color: var(--alerta); }
+.cifra-inicio > span { font-size: 13px; color: var(--tinta-suave); }
+.barra-mini { display: block; height: 6px; margin: 4px 0 2px; background: var(--azul-claro); border-radius: 6px; overflow: hidden; }
+.barra-mini i { display: block; height: 100%; background: var(--azul-inko); border-radius: 6px; }
+
+.titulo-seccion { font-size: 19px; color: var(--azul-inko); margin: 0 0 14px; }
+
+.rejilla-modulos { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+.modulo {
+  min-height: 0; gap: 8px; padding: 18px 18px 16px;
+  border: 0; border-left: 5px solid var(--azul-inko); border-radius: var(--radio-grande);
+  box-shadow: var(--sombra);
+}
+.modulo:not(:disabled):hover { transform: translateY(-2px); box-shadow: var(--sombra-alta); }
+.modulo .cabeza-modulo { display: flex; align-items: center; gap: 10px; color: var(--azul-inko); }
+.modulo .cabeza-modulo svg {
+  width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.modulo .cabeza-modulo b { font-size: 18px; }
+.modulo .linea-modulo { font-size: 13.5px; color: var(--tinta-suave); }
+.modulo .chips-modulo { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.modulo.proximamente { border-left-color: var(--azul-borde); }
+
+/* --------------------------------------------- piezas de todo el sistema */
+.panel {
+  border: 0; border-radius: var(--radio-grande); box-shadow: var(--sombra);
+}
+.panel > h2 {
+  font-family: var(--fuente-titulo); font-size: 17px; font-weight: 700;
+  text-transform: none; letter-spacing: 0;
+  background: var(--blanco); border-bottom: 1px solid #E6ECF3; padding: 16px 20px;
+}
+.explica { padding: 12px 20px 0; }
+
+.btn { border-radius: 12px; }
+.btn.primario { box-shadow: 0 4px 12px rgba(0, 47, 93, .18); }
+
+.etiqueta { border-radius: 999px; }
+
+table.captura th {
+  background: var(--blanco); color: var(--tinta-suave);
+  border-bottom: 2px solid var(--azul-inko);
+}
+table.captura th.fila-titulo { background: var(--blanco); }
+
+.migaja { font-size: 13.5px; margin-bottom: 14px; }
+
+.aviso { border-radius: 14px; }
+
+.pestanas { border-bottom: 0; gap: 6px; flex-wrap: wrap; }
+.pestanas button {
+  border: 0; border-radius: 12px; padding: 10px 16px;
+  background: var(--blanco); box-shadow: var(--sombra); color: var(--azul-inko);
+}
+.pestanas button[aria-selected="true"] { background: var(--azul-inko); color: var(--blanco); }
+
+.tarea { border-radius: 14px; border-top: 0; border-right: 0; border-bottom: 0; box-shadow: var(--sombra); }
+
+.bloque-avisos { border: 0; }
+.tira-conexiones { border: 0; box-shadow: var(--sombra); }
+.tarjeta-puesto { border: 0; box-shadow: var(--sombra); background: var(--blanco); }
+
+/* --- el camino de un documento: línea de tiempo vertical con quién y cuándo */
+.camino {
+  display: grid !important; grid-template-columns: 1fr !important; gap: 0 !important;
+  list-style: none; margin: 0; padding: 18px 20px 6px !important;
+}
+.camino li {
+  position: relative; border: 0 !important; background: none !important;
+  padding: 0 0 18px 32px !important; border-radius: 0 !important;
+}
+.camino li::before {
+  content: ''; position: absolute; left: 0; top: 2px; width: 18px; height: 18px;
+  border-radius: 50%; border: 2px solid var(--azul-borde); background: var(--blanco); box-sizing: border-box;
+}
+.camino li::after {
+  content: ''; position: absolute; left: 8px; top: 22px; bottom: 0; width: 2px; background: var(--azul-borde);
+}
+.camino li:last-child::after { display: none; }
+.camino li.hecho::before { background: var(--azul-inko); border-color: var(--azul-inko); }
+.camino li.hecho::after { background: var(--azul-inko); }
+.camino li.hecho b { color: var(--tinta) !important; }
+.camino li.en-curso::before { border-color: var(--azul-inko); box-shadow: 0 0 0 4px var(--azul-claro); }
+.camino li.en-curso b { color: var(--azul-inko) !important; }
+
+/* --------------------------------------------------- pantallas angostas */
+@media (max-width: 820px) {
+  .riel {
+    position: sticky; bottom: auto; width: auto; height: auto;
+    flex-direction: row; align-items: center; justify-content: flex-start;
+    padding: 6px 8px; overflow-x: auto; overflow-y: hidden;
+  }
+  .riel .logo-riel { width: 48px; margin: 0 6px 0 2px; }
+  .riel button { width: 62px; }
+  .riel button.si { box-shadow: inset 0 -3px 0 var(--blanco); }
+  .riel .separador-riel { width: 1px; height: 34px; margin: 0 4px; }
+  .riel .relleno-riel { display: none; }
+  body.con-riel .area { margin-left: 0; }
+  .barra { padding: 20px 18px 24px; }
+  .barra.grande { padding: 24px 18px 70px; }
+  .barra .titulo h1 { font-size: 23px; }
+  .barra.grande .titulo h1 { font-size: 27px; }
+  .envoltorio { padding: 18px 16px 120px; }
+  .cifra-inicio { border-right: 0; border-bottom: 1px solid var(--azul-borde); }
+}
+
+/* Las barras de guardar van pegadas abajo: no deben quedar debajo del riel. */
+@media (min-width: 821px) { body.con-riel .pie { left: var(--ancho-riel); } }
+.cifra-inicio .detalle-alerta { color: var(--alerta); font-weight: 600; }
+.modulo .chips-modulo .etiqueta { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+.envoltorio { max-width: 1280px; }
+
+/* Buscador arriba de una lista larga (Configuración → Materiales). */
+.filtro-lista { padding: 12px 20px; }
+.filtro-lista input {
+  width: 100%; max-width: 420px; padding: 10px 14px; font: inherit;
+  border: 1px solid var(--azul-borde); border-radius: 12px; background: var(--gris);
+}
+.filtro-lista input:focus { outline: 2px solid var(--azul-inko); background: var(--blanco); }
+
+/* --- Configuración → Materiales: un catálogo por familia --- */
+.grupos-material { display: grid; gap: 12px; padding: 4px 20px 20px; }
+.grupo-material { border-radius: 14px; background: var(--gris); overflow: hidden; }
+.grupo-material.inactiva { opacity: .6; }
+.grupo-material > header {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 14px; background: var(--blanco); border-left: 5px solid var(--azul-inko);
+}
+.grupo-material > header .que b { font-family: var(--fuente-titulo); font-size: 17px; color: var(--azul-inko); }
+.grupo-material .que { flex: 1; min-width: 180px; display: grid; }
+.grupo-material .que small { color: var(--tinta-suave); font-size: 13px; }
+.fila-producto {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 14px 10px 24px; border-top: 1px solid #E3E9F1;
+}
+.fila-producto.inactiva { opacity: .55; }
+.fila-producto .que b { font-weight: 700; font-size: 15px; }
+.imagen-producto { display: flex; align-items: center; gap: 8px; flex: none; }
+.imagen-producto .imagen-catalogo { width: 52px; height: 52px; object-fit: cover; border-radius: 10px; background: var(--blanco); }
+.imagen-producto .imagen-catalogo.heredada { opacity: .55; }
+.imagen-producto .sin-imagen {
+  width: 52px; height: 52px; border-radius: 10px; display: grid; place-items: center; text-align: center;
+  font-size: 10.5px; color: var(--tinta-suave); background: var(--blanco); border: 1px dashed var(--azul-borde);
+}
+.imagen-producto .btn { padding: 6px 10px; font-size: 13px; }
+.sin-productos { margin: 0; padding: 10px 24px; font-size: 13.5px; color: var(--tinta-suave); }
+.ver-productos { padding: 7px 12px; font-size: 13.5px; }
+.flecha-grupo { display: inline-block; transition: transform .15s; }
+.grupo-material:not(.abierto) .flecha-grupo { transform: rotate(-90deg); }
+.grupo-material:not(.abierto) .sin-productos { display: none; }
+
+/* --- Entregas x Fuera: la cartera de clientes --- */
+.dos-columnas { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.lista-clientes { padding: 0 20px 18px; }
+.fila-cliente {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 4px; border-top: 1px solid #E6ECF3;
+}
+.fila-cliente.inactiva { opacity: .55; }
+.fila-cliente .que { flex: 1; min-width: 200px; display: grid; }
+.fila-cliente .que small { color: var(--tinta-suave); font-size: 13px; }
+.fila-cliente .btn { padding: 7px 12px; font-size: 13.5px; }
+.nota-campo.nota-nuevo { color: var(--ambar); font-weight: 700; }
+
+/* ========================================================== LOGÍSTICA
+   Las unidades se ven como fichas: foto, nombre y lo que hay que saber de un
+   vistazo —kilometraje, rendimiento, papeles y servicio—. */
+
+.rejilla-unidades {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.tarjeta-unidad {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 12px 14px;
+  background: var(--blanco);
+  border: 1px solid var(--azul-borde);
+  border-left: 4px solid var(--azul-inko);
+  border-radius: var(--radio);
+  cursor: pointer;
+  transition: box-shadow .15s, transform .15s;
+}
+
+.tarjeta-unidad:hover { box-shadow: var(--sombra-alta); transform: translateY(-1px); }
+.tarjeta-unidad.retirada { border-left-color: var(--azul-borde); opacity: .62; }
+
+.tarjeta-unidad .foto {
+  flex: 0 0 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--azul-claro);
+  overflow: hidden;
+}
+
+.tarjeta-unidad .foto img { width: 100%; height: 100%; object-fit: cover; }
+.tarjeta-unidad .foto svg { width: 28px; height: 28px; stroke: var(--azul-inko); fill: none; stroke-width: 1.6; }
+.tarjeta-unidad .cuerpo { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tarjeta-unidad .cuerpo b { font-size: 15px; }
+.tarjeta-unidad .meta { font-size: 13px; color: var(--tinta-suave); }
+.tarjeta-unidad .etiquetas { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.tarjeta-unidad .etiqueta { font-size: 10px; padding: 2px 7px; }
+
+/* La lectura del odómetro en el checklist: mismo trato que el dinero. */
+.item.medidor { flex-direction: column; align-items: stretch; }
+.captura-medidor { display: flex; align-items: center; gap: 10px; }
+.captura-medidor label { font-size: 13px; color: var(--tinta-suave); }
+
+.captura-medidor .lectura {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--azul-borde);
+  border-radius: 10px;
+  padding: 2px 10px;
+  background: var(--blanco);
+}
+
+.captura-medidor .lectura input { border: 0; width: 120px; font-size: 16px; padding: 8px 0; background: none; }
+.captura-medidor .lectura span { color: var(--tinta-suave); font-size: 13px; }
+
+/* Lo que falta por contestar, señalado donde está. */
+.item.falta, tr.falta > td { background: var(--alerta-suave); }
+.item.falta { border-radius: 10px; outline: 2px solid var(--alerta); outline-offset: -2px; }
+
+.item.falta-ahora, tr.falta-ahora > td { animation: aviso-falta 1.6s ease-out; }
+
+@keyframes aviso-falta {
+  0%, 100% { box-shadow: none; }
+  30% { box-shadow: 0 0 0 4px var(--alerta-suave); }
+}
+
+/* Dos campos en un renglón, dentro de una ventana. */
+.campo-par { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sub-modal { margin: 14px 0 4px; font-size: 14px; color: var(--tinta-suave); }
+.sub-panel { margin: 18px 0 8px; font-size: 15px; }
+
+/* Las listas editables de Logística en Configuración. */
+.grupo-catalogo { padding: 12px 0; border-top: 1px solid var(--azul-borde); }
+.grupo-catalogo h3 { font-size: 14px; margin-bottom: 8px; }
+.fichas-catalogo { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+
+.fichas-catalogo .ficha {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--azul-claro);
+  color: var(--azul-inko);
+  border-radius: 999px;
+  padding: 4px 6px 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fichas-catalogo .ficha.retirada { background: var(--gris); color: var(--tinta-suave); text-decoration: line-through; }
+
+.fichas-catalogo .ficha .quitar {
+  border: 0;
+  background: rgba(255, 255, 255, .7);
+  border-radius: 999px;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  font-weight: 700;
+  color: inherit;
+}
+
+.agrega-catalogo { display: flex; gap: 8px; }
+.agrega-catalogo input { flex: 1; max-width: 320px; }
+
+@media (max-width: 620px) {
+  .campo-par { grid-template-columns: 1fr; }
+  .rejilla-unidades { grid-template-columns: 1fr; }
+}
+
+/* La barra de filtros: la usan el reporte de checklists, el desempeño y la
+   lista de unidades. Es una barra, no un formulario: se lee de corrido. */
+.filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: var(--blanco);
+  border: 1px solid var(--azul-borde);
+  border-radius: var(--radio);
+}
+
+.filtros label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--tinta-suave); }
+
+.filtros input,
+.filtros select {
+  padding: 8px 10px;
+  border: 1px solid var(--azul-borde);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 15px;
+  background: var(--blanco);
+}
+
+.filtros .chips-filtro { margin: 0; flex: 1 1 100%; }
+.filtros #busca-unidad { flex: 1 1 240px; }
+
+/* ------------------------------------------------------------ BAHÍA DIGITAL
+
+   La ficha de emergencia va dentro del panel de la persona, separada de sus
+   papeles por una línea: son dos cosas distintas de la misma persona. */
+
+.panel-ficha {
+  margin: 4px 0 16px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--azul-borde);
+}
+.panel-ficha .campo-par { margin-bottom: 0; }
+.panel-ficha h3 { display: flex; align-items: center; gap: 8px; }
+
+.panel-ficha > summary {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  cursor: pointer; padding: 4px 0; color: var(--azul-inko);
+}
+.panel-ficha > summary::marker { color: var(--azul-borde); }
+.resumen-ficha { font-size: 14px; color: var(--tinta-suave); }
+
+/* La descripción de un rollo de producción especial: qué tiene de distinto. */
+.descripcion-rollo { color: var(--tinta-suave); font-style: italic; }
+.fila-producto .descripcion-rollo { display: block; }
+
+.paquete-armado {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  justify-content: space-between;
+  padding: 8px 0; border-top: 1px solid var(--azul-borde);
+}
+
+/* ------------------------------------------------------- CONFIGURACIÓN PLEGADA
+
+   Lo que se ve es el resumen; las listas largas y los formularios de alta se
+   abren al pedirlos. */
+
+.plegable { margin: 0 18px 14px; }
+.plegable > summary {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; cursor: pointer;
+  border: 1px solid var(--azul-borde); border-radius: 10px;
+  background: var(--blanco); color: var(--azul-inko);
+  font-size: 14px; font-weight: 600;
+}
+.plegable > summary:hover { background: #F2F6FC; }
+.plegable[open] > summary { margin-bottom: 10px; }
+.plegable > .desliza,
+.plegable > .bloque-form,
+.plegable > .editor-nuevo { margin: 0; padding-left: 0; padding-right: 0; }
+.plegable .bloque-form > h3 { display: none; }
+
+/* Las listas de catálogo plegadas van en fila, como botones. */
+.plegable.de-catalogo { display: inline-block; margin-right: 8px; vertical-align: top; }
+.plegable.de-catalogo[open] { display: block; }
+.plegable.de-catalogo .grupo-catalogo > h3 { display: none; }
+.plegable.de-nota > summary { font-weight: 500; color: var(--tinta-suave); }
+
+/* El nivel del tanque: cuatro posiciones, como la aguja. */
+.opciones.niveles { display: inline-flex; gap: 6px; }
+.opcion.nivel {
+  min-width: 56px; border: 1px solid var(--azul-borde);
+  background: var(--blanco); color: var(--azul-inko);
+}
+.opcion.nivel[aria-pressed="true"] { background: var(--azul-inko); color: var(--blanco); border-color: var(--azul-inko); }
+
+/* ------------------------------------------------------------ CINTA DE ESPERA
+
+   Se enciende mientras hay una petición en vuelo. No tapa nada ni se puede
+   tocar: solo dice «sí está pasando algo», para que nadie toque dos veces. */
+
+#cinta-espera {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  z-index: 9999; pointer-events: none;
+  background: transparent; opacity: 0; transition: opacity .15s ease;
+}
+#cinta-espera.activa { opacity: 1; }
+#cinta-espera.activa::before {
+  content: ''; display: block; height: 100%; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--azul-claro), var(--blanco), var(--azul-claro), transparent);
+  animation: corre-cinta 1s linear infinite;
+}
+@keyframes corre-cinta {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+
+/* --------------------------------------------------------- TRAZO DE LA RUTA
+
+   El recorrido del día, dibujado por la plataforma: el almacén y luego las
+   paradas A, B, C en el orden planeado. Se redibuja solo al subir, mover o
+   marcar una parada, y se ve igual sin internet —el mapa con calles se abre
+   aparte, en la aplicación de mapas del teléfono. */
+
+.tira-ruta {
+  display: flex; align-items: stretch; gap: 6px;
+  margin: 0 18px 12px; padding: 4px 0 10px;
+  overflow-x: auto; scrollbar-width: thin;
+}
+.punto-ruta {
+  flex: none; width: 168px;
+  display: grid; gap: 4px; align-content: start;
+  padding: 10px 12px;
+  border: 1px solid var(--azul-borde); border-top: 3px solid var(--azul-borde);
+  border-radius: 12px; background: var(--blanco);
+}
+.punto-ruta b { font-size: 13px; line-height: 1.25; }
+.punto-ruta small { font-size: 11.5px; line-height: 1.3; color: var(--tinta-suave); }
+.punto-ruta small i { color: var(--ambar); }
+.punto-ruta .etiqueta { justify-self: start; margin-top: 2px; }
+
+/* El pin lleva la letra con la que se nombra la parada en el patio. */
+.pin-ruta {
+  display: grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--azul-inko); color: var(--blanco);
+  font-family: var(--fuente-titulo); font-size: 13px; font-weight: 700;
+}
+.punto-ruta.partida { border-top-color: var(--azul-medio); }
+.punto-ruta.azul { border-top-color: var(--azul-inko); }
+.punto-ruta.verde { border-top-color: var(--ok); }
+.punto-ruta.verde .pin-ruta { background: var(--ok); }
+.punto-ruta.ambar { border-top-color: var(--ambar); }
+.punto-ruta.ambar .pin-ruta { background: var(--ambar); }
+
+/* Cómo va cada una: lo entregado se apaga, lo que no se entregó se marca. */
+.punto-ruta.entregada { background: var(--ok-suave); opacity: .75; }
+.punto-ruta.no_entregada { background: var(--alerta-suave); border-top-color: var(--alerta); }
+.punto-ruta.no_entregada .pin-ruta { background: var(--alerta); }
+
+.flecha-ruta {
+  flex: none; align-self: center;
+  color: var(--azul-borde); font-size: 18px; font-weight: 700;
+}
+
+/* El botón del mapa es un enlace de verdad —se abre en otra pestaña—, pero se
+   ve botón, no texto subrayado. */
+a.btn, a.btn:hover { text-decoration: none; }
+
+/* ------------------------------------------- FOTOS QUE TODAVÍA NO ESTÁN ARRIBA
+
+   En la bodega el wifi se cae. Una foto tomada sin señal se queda a la vista,
+   marcada, mientras se reintenta sola; y una miniatura que no se pudo bajar se
+   marca para volver a pedirla con un toque. Ni una ni otra desaparecen: desde
+   el otro lado de la pantalla, una foto que se borra sola es una foto perdida. */
+
+.mini.por-subir img { opacity: .62; }
+.mini.por-subir::after {
+  content: '⏳'; position: absolute; left: 4px; bottom: 4px;
+  font-size: 12px; line-height: 1;
+  background: var(--ambar-suave); color: var(--ambar);
+  border-radius: 6px; padding: 2px 5px;
+}
+.mini.sin-cargar { cursor: pointer; }
+.mini.sin-cargar img { opacity: .2; }
+.mini.sin-cargar::after {
+  content: '↻ tocar para verla';
+  position: absolute; inset: 0;
+  display: grid; place-items: center; text-align: center;
+  padding: 6px; border-radius: 9px;
+  border: 1.5px dashed var(--azul-borde); background: var(--azul-claro);
+  font-size: 11px; font-weight: 700; line-height: 1.25; color: var(--azul-inko);
+}
+.nota-foto.por-subir { color: var(--ambar); font-weight: 600; }
+.nota-foto.por-subir .btn { margin-left: 8px; padding: 5px 10px; font-size: 13px; }
+
+/* ------------------------------------------ TODO LO QUE HACE UNA MISMA SALIDA
+
+   La unidad sale una vez y hace tres cosas. Se marcan con el dedo, que es como
+   se llena esto en el patio: botones grandes, no una lista con palomitas. */
+
+.marcas-cabecera { display: flex; flex-wrap: wrap; gap: 8px; }
+.marcas-cabecera .marca {
+  border: 1.5px solid var(--azul-borde); border-radius: 10px;
+  background: var(--blanco); color: var(--tinta);
+  padding: 10px 14px; font-size: 14px; font-weight: 600;
+}
+.marcas-cabecera .marca[aria-pressed="true"] {
+  border-color: var(--azul-inko); background: var(--azul-inko); color: var(--blanco);
+}
+.marcas-cabecera .marca:disabled { opacity: .45; }
+
+/* ------------------------------------------ CUANDO LA PLATAFORMA NO CONTESTA
+
+   La plataforma vive en una computadora del almacén. Si se apaga o sale del
+   wifi, el iPad se queda hablando solo. Se dice abajo, fijo, sin tapar lo que
+   está en pantalla: lo capturado sigue ahí y en cuanto vuelve se sigue. */
+
+#tira-sin-plataforma {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 9998;
+  padding: 11px 16px;
+  background: var(--alerta); color: var(--blanco);
+  font-size: 13.5px; line-height: 1.35; text-align: center;
+}
+body.sin-plataforma .pie { bottom: 44px; }
+
+/* ------------------------------------------- CUANDO LA PANTALLA SE QUEDÓ ATRÁS
+
+   Una tablet que lleva días abierta sigue con la versión de ese día. Se avisa
+   abajo y se recarga cuando quien la está usando quiera: recargar sola a media
+   captura sería peor que la enfermedad. */
+
+#tira-version {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 9997;
+  display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: center; justify-content: center;
+  padding: 10px 16px;
+  background: var(--azul-inko); color: var(--blanco);
+  font-size: 13.5px; line-height: 1.35; text-align: center;
+}
+#tira-version .btn {
+  border-color: var(--blanco); background: var(--blanco); color: var(--azul-inko);
+  padding: 7px 14px; font-size: 13.5px;
+}
+body.sin-plataforma #tira-version { bottom: 44px; }
+
+/* ------------------------------------------- LO QUE NO CABE EN UNA COLUMNA
+
+   Cada teléfono puede llevar los datos que haga falta —inventario, plan, con
+   qué funda salió— sin agregarle una columna a la tabla cada vez. Se ven como
+   etiquetas dentro de su celda, que es lo que son: apuntes de ese equipo. */
+
+.datos-extra { min-width: 190px; }
+.dato-extra {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin: 0 5px 5px 0; padding: 4px 6px 4px 9px;
+  border: 1px solid var(--azul-borde); border-radius: 8px;
+  background: var(--blanco); font-size: 12.5px; line-height: 1.2;
+}
+.dato-extra b { font-weight: 700; color: var(--azul-inko); }
+.quitar-extra {
+  border: 0; border-radius: 6px; padding: 0 4px;
+  background: transparent; color: var(--alerta);
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+.datos-extra .btn { padding: 5px 10px; font-size: 12.5px; }

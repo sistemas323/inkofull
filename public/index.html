@@ -8,8 +8,15 @@
   <link rel="icon" href="marca/inko-azul.png">
   <link rel="apple-touch-icon" href="marca/inko-azul.png">
   <link rel="stylesheet" href="estilos.css">
+  <!-- Estilo «Riel azul» (escogido el 18-sep-2026): va encima de estilos.css. -->
+  <link rel="stylesheet" href="riel.css">
 </head>
 <body class="en-reposo">
+
+  <!-- Cinta de espera: se enciende mientras la plataforma habla con el
+       servidor. En una tablet sobre wifi, medio segundo sin señal de vida se
+       siente como que no funcionó. -->
+  <div id="cinta-espera" aria-hidden="true"></div>
 
   <!-- Estado de descanso de la tablet. Se muestra al arrancar y vuelve solo
        tras un rato sin uso; cualquier toque la despierta. -->
@@ -19,18 +26,25 @@
     <span class="toque" id="pista-reposo">Toca la pantalla para comenzar</span>
   </div>
 
-  <header class="barra" id="barra" hidden>
-    <!-- Versión blanca: la barra va en Azul INKO y el logo azul no tendría
-         contraste sobre ella. -->
-    <span class="marca"><img src="marca/inko-blanco.png" alt="INKO"></span>
-    <span class="titulo">
-      <h1 id="titulo">Sistema Digital</h1>
-      <span class="sub" id="subtitulo"></span>
-    </span>
-    <nav id="navegacion"></nav>
-  </header>
+  <!-- El riel: la columna azul oscuro con el logo y los módulos de quien entró.
+       En pantallas angostas se vuelve una franja arriba. -->
+  <nav class="riel" id="riel" hidden aria-label="Módulos"></nav>
 
-  <main class="envoltorio" id="vista" hidden></main>
+  <div class="area">
+    <header class="barra" id="barra" hidden>
+      <!-- Versión blanca: la cabecera va en Azul INKO y el logo azul no tendría
+           contraste sobre ella. Solo se ve cuando no hay riel (al entrar). -->
+      <span class="marca"><img src="marca/inko-blanco.png" alt="INKO"></span>
+      <span class="titulo">
+        <span class="sobretitulo" id="sobretitulo"></span>
+        <h1 id="titulo">Sistema Digital</h1>
+        <span class="sub" id="subtitulo"></span>
+      </span>
+      <nav id="navegacion"></nav>
+    </header>
+
+    <main class="envoltorio" id="vista" hidden></main>
+  </div>
 
   <script src="app.js"></script>
 </body>
