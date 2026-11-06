@@ -1,0 +1,24 @@
+# Lo que NO entra en la imagen.
+#
+# Lo primero de esta lista es lo importante: la base de datos y las fotos del
+# almacén. Sin esta línea, cada imagen que se construya se llevaría adentro una
+# copia de la operación —nombres, claves, evidencia— y esa copia viajaría a
+# donde viaje la imagen. Los datos van en un volumen, aparte y una sola vez.
+datos/
+respaldos/
+
+# El historial del código no tiene nada que hacer dentro de la imagen, y pesa
+# más que la plataforma entera.
+.git/
+.gitignore
+
+# Arranques de Windows: adentro del contenedor no sirven para nada.
+*.bat
+*.cmd
+*.vbs
+
+# Basura del sistema
+Thumbs.db
+desktop.ini
+.DS_Store
+node_modules/

@@ -1,0 +1,34 @@
+# =============================================================================
+#  SISTEMA DIGITAL INKO — levantar con un comando
+#
+#     docker compose up -d        la prende (y la deja prendida)
+#     docker compose logs -f      ver qué dice
+#     docker compose down         apagarla
+#     docker compose up -d --build   después de cambiar el código
+#
+#  `restart: unless-stopped` es la razón de ser de este archivo: la plataforma
+#  vuelve sola cuando la computadora se reinicia o cuando se cae por un error.
+#  Es lo mismo que resuelve «Iniciar plataforma.bat» en Windows, pero sin
+#  depender de que alguien tenga la sesión iniciada.
+# =============================================================================
+
+services:
+  plataforma:
+    build: .
+    container_name: inko
+    restart: unless-stopped
+    # tini ya va dentro de la imagen; esto es por si alguien la corre sin él.
+    init: true
+    ports:
+      # Se publica en todas las direcciones de la computadora a propósito: por
+      # ahí entran las tablets del almacén, no solo esta máquina.
+      - "3000:3000"
+    volumes:
+      # La base y las fotos. Sobreviven a cada versión nueva de la imagen:
+      # la plataforma se reemplaza, la operación no.
+      - inko-datos:/datos
+    environment:
+      TZ: America/Mexico_City
+
+volumes:
+  inko-datos:

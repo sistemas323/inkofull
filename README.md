@@ -35,6 +35,35 @@ que es por donde entran las tablets.
 | `seed.js`, `seed-almacen.js` | los catálogos iniciales, transcritos de los Excel que se usaban antes |
 | `respaldar.js` | copia fechada de la base y las fotos, con la plataforma encendida |
 
+## Con Docker
+
+Para una computadora que no sea Windows —un mini PC con Linux, un NAS— o para
+levantarla sin instalar nada más que Docker:
+
+```
+docker compose up -d
+```
+
+Queda en el puerto 3000, vuelve sola si la máquina se reinicia y la base y las
+fotos viven en un volumen (`inko-datos`), aparte de la imagen: la plataforma se
+reemplaza en cada versión, la operación no. La imagen **no lleva datos adentro**
+—el `.dockerignore` deja fuera `datos/` y `respaldos/`—, corre como usuario sin
+privilegios y se revisa sola contra `/api/salud`.
+
+La primera vez, sobre un volumen vacío, hay que sembrar los catálogos y el
+usuario Administrador:
+
+```
+docker compose run --rm plataforma node seed.js
+```
+
+O, si se está mudando una plataforma que ya existe, copiar dentro del volumen la
+carpeta `datos` completa en vez de sembrar.
+
+> En Windows, Docker Desktop pide WSL2 y pesa bastante más que lo que ahorra:
+> ahí sale más a cuenta `Iniciar plataforma.bat` con la tarea de arranque. El
+> Dockerfile es para el día que la plataforma viva en otra cosa.
+
 ## Lo que no está aquí
 
 `datos/` y `respaldos/` no se versionan: ahí viven la base de datos y las fotos
