@@ -8,6 +8,26 @@ datos/
 # se agregan, que no entren al historial.
 node_modules/
 
+# Secretos y entorno. Un .env.example, si llega a existir, sí se versiona.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# Compilación y temporales. Hoy no hay build; quedan fuera por si aparece.
+dist/
+build/
+.next/
+out/
+coverage/
+*.log
+*.tmp
+*.bak
+*.backup
+
 # Basura del sistema
 Thumbs.db
 desktop.ini

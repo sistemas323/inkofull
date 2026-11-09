@@ -2089,6 +2089,24 @@ migracionUnaVez('chequeo-citas-sin-repetidas',
     db.prepare("UPDATE secciones SET titulo = 'Lo del envío a CEDIS' WHERE id = ?").run(seccion.id);
   });
 
+// PUESTOS. Antes eran tres perfiles escritos en el código; ahora viven aquí para
+// que el Administrador los cree y los ajuste conforme cambie el organigrama.
+// `permisos` guarda {permiso: true|false} con TODOS los que existían cuando se
+// guardó: así, si mañana un permiso se parte en dos, se sabe que el hijo es nuevo
+// y hereda lo que el puesto tenía en el padre.
+db.exec(`
+CREATE TABLE IF NOT EXISTS puestos (
+  clave        TEXT PRIMARY KEY,
+  etiqueta     TEXT NOT NULL,
+  descripcion  TEXT,
+  permisos     TEXT NOT NULL DEFAULT '{}',
+  orden        INTEGER NOT NULL DEFAULT 0,
+  activo       INTEGER NOT NULL DEFAULT 1,
+  creado_por   INTEGER REFERENCES usuarios(id),
+  creado_en    TEXT
+);
+`);
+
 // Autorizar la salida de una unidad deja de venir con el puesto: lo pidió
 // Ronaldo el 26-oct-2026 —«solo personas asignadas podrán autorizar»—. Para que
 // nadie se quede sin poder hacer su trabajo de un día para otro, quien lo tenía
@@ -2213,24 +2231,6 @@ DELETE FROM almacen_fotos WHERE
   OR (documento_tipo IN ('vxf', 'vxf_cobro') AND documento_id NOT IN (SELECT id FROM vxf_ordenes))
   OR (documento_tipo = 'conteo_renglon' AND documento_id NOT IN (SELECT id FROM almacen_conteo_renglones))
   OR (documento_tipo = 'salida_renglon' AND documento_id NOT IN (SELECT id FROM almacen_salida_renglones));
-`);
-
-// PUESTOS. Antes eran tres perfiles escritos en el código; ahora viven aquí para
-// que el Administrador los cree y los ajuste conforme cambie el organigrama.
-// `permisos` guarda {permiso: true|false} con TODOS los que existían cuando se
-// guardó: así, si mañana un permiso se parte en dos, se sabe que el hijo es nuevo
-// y hereda lo que el puesto tenía en el padre.
-db.exec(`
-CREATE TABLE IF NOT EXISTS puestos (
-  clave        TEXT PRIMARY KEY,
-  etiqueta     TEXT NOT NULL,
-  descripcion  TEXT,
-  permisos     TEXT NOT NULL DEFAULT '{}',
-  orden        INTEGER NOT NULL DEFAULT 0,
-  activo       INTEGER NOT NULL DEFAULT 1,
-  creado_por   INTEGER REFERENCES usuarios(id),
-  creado_en    TEXT
-);
 `);
 
 }
